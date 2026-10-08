@@ -1,0 +1,130 @@
+# =============================================================================
+# Agricultura IoT - Plataforma FIWARE
+# =============================================================================
+# Despliega en una instancia EC2 (Ubuntu) la plataforma FIWARE que recibe las
+# lecturas de los sensores del cultivo, guarda su estado actual y su historico,
+# y las muestra en tableros.
+#
+# Flujo de los datos:
+#
+#   Sensor --HTTP--> Orion (estado actual) --suscripcion--> QuantumLeap
+#                      |                                        |
+#                    MongoDB                                 CrateDB --> Grafana
+#                                                           (historico)  (tableros)
+#
+# Puertos expuestos en la instancia:
+#   1026  Orion        API NGSI (v2 y NGSI-LD) para crear y actualizar entidades
+#   8668  QuantumLeap  API para consultar series de tiempo
+#   3000  Grafana      tableros de visualizacion
+#   4200  CrateDB      consola web / API SQL
+#   5432  CrateDB      protocolo PostgreSQL (lo usa Grafana)
+#   27017 MongoDB      base de datos de Orion
+#
+# Antes de levantarlo, CrateDB necesita vm.max_map_count >= 262144 en el host
+# (ver README.md).
+# =============================================================================
+version: "3.8"
+services:
+  # ---------------------------------------------------------------------------
+  # Orion-LD: Context Broker. Guarda el estado actual de cada sensor (entidad)
+  # y notifica a QuantumLeap cada vez que un valor cambia.
+  # Acepta tanto la API NGSI-v2 (/v2/...) como NGSI-LD (/ngsi-ld/v1/...).
+  # ---------------------------------------------------------------------------
+  orion:
+    image: fiware/orion-ld
+    hostname: orion
+    container_name: orion
+    depends_on:
+      - mongo-db
+    networks:
+      - default
+    expose:
+      - "1026"
+    ports:
+      - "1026:1026" # localhost:1026
+    command: -dbhost mongo-db -logLevel DEBUG
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail -s http://localhost:1026/version || exit 1"]
+      interval: 10m0s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # QuantumLeap: recibe las notificaciones de Orion y guarda cada lectura como
+  # serie de tiempo en CrateDB (historico de las variables del cultivo).
+  # ---------------------------------------------------------------------------
+  quantumleap:
+    image: orchestracities/quantumleap
+    hostname: quantumleap
+    container_name: fiware-quantumleap
+    ports:
+      - "8668:8668"
+    depends_on:
+      - crate-db
+    environment:
+      - CRATE_HOST=crate-db
+      - LOGLEVEL=DEBUG
+
+  # ---------------------------------------------------------------------------
+  # MongoDB: base de datos de Orion (entidades y suscripciones).
+  # La version de Orion-LD actual exige MongoDB 4.2 o superior; con mongo:3.6
+  # Orion se cae al arrancar con "wire version 6 ... requires at least 8".
+  # ---------------------------------------------------------------------------
+  mongo-db:
+    image: mongo:4.4
+    hostname: mongo-db
+    container_name: db-mongo
+    expose:
+      - "27017"
+    ports:
+      - "27017:27017"
+    networks:
+      - default
+    volumes:
+      - mongo-db:/data/db
+
+  # ---------------------------------------------------------------------------
+  # CrateDB: base de datos de series de tiempo donde QuantumLeap guarda el
+  # historico. Cada tipo de entidad queda en una tabla doc.et<tipo>.
+  # ---------------------------------------------------------------------------
+  crate-db:
+    image: crate
+    hostname: crate-db
+    container_name: db-crate
+    ports:
+      - "4200:4200"
+      - "4300:4300"
+      - "5432:5432"
+    command: crate -Cauth.host_based.enabled=false  -Ccluster.name=democluster -Chttp.cors.enabled=true -Chttp.cors.allow-origin="*"
+    environment:
+      - CRATE_HEAP_SIZE=4g
+    volumes:
+      - crate-db:/data
+
+  # ---------------------------------------------------------------------------
+  # Grafana: tableros para visualizar el historico. Se conecta a CrateDB como
+  # fuente de datos PostgreSQL (host crate-db:5432).
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    depends_on:
+      - crate-db
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana:/var/lib/grafana
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.19.1.0/24
+
+# Volumenes persistentes: los datos sobreviven a "docker compose down"
+# (se borran solo con "docker compose down -v").
+volumes:
+  mongo-db: ~
+  crate-db: ~
+  grafana: ~

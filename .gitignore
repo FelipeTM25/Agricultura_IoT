@@ -1,0 +1,4 @@
+# Llaves SSH y credenciales: nunca se suben
+*.pem
+*.key
+.env
