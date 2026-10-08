@@ -16,10 +16,23 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
   docs en `/docs`). Login de un unico admin con JWT; credenciales en `gestor/.env` (no se sube,
   plantilla en `gestor/.env.example`). La API habla con Orion por NGSI-v2 (`ORION_URL`).
 
+- `sensor-lilygo/`: firmware PlatformIO del nodo (antes `TXlora`, que transmitia por LoRa para un
+  examen). Credenciales en `include/secretos.h` (no se sube, plantilla `secretos.example.h`).
+  `src/LoRaBoards.*` y `utilities.h` son del ejemplo de LilyGO; solo se desactivo su softAP WiFi.
+
 ## Modelo del sensor
-Placa LilyGO (aun sin conectar). Entidad NGSI-v2 tipo `SensorAgricola` con atributos `temperatura`,
-`humedad`, `luz`, `radiacion` (Number) y `ubicacion` (geo:json Point, coordenadas [lon, lat]).
+LilyGO T-Beam (ESP32, AXP192, GPS en Serial1 34/12, OLED). Cada `PERIODO_TX_MS` (30 s) promedia 20
+muestras y hace `POST /v2/op/update` con `actionType: append` a Orion :1026 (crea la entidad si no
+existe; las variables sin lectura valida no se mandan). Entidad `sensor01`, tipo `SensorAgricola`:
+- `temperatura` (°C) y `humedad` (% aire): HDC1080, I2C 0x40.
+- `luz` (lux) y `radiacion` (cuentas IR 0..1023, indicador relativo, no W/m2): CJMCU-3216 = AP3216C,
+  I2C 0x1E, driver propio en `src/Ap3216.h`. Satura en ~20661 lux (sol directo).
+- `humedadSuelo` (%): sensor capacitivo analogico en GPIO36 (VP). Debe ser ADC1: ADC2 no funciona con
+  WiFi. Calibrar `SUELO_SECO_RAW` / `SUELO_MOJADO_RAW` en main.cpp.
+- `ubicacion` (geo:json Point [lon, lat]): GPS, solo se manda con fix.
+Ambos sensores I2C van al bus de la placa (SDA 21 / SCL 22, 3V3, GND), compartido con PMU 0x34 y OLED 0x3C.
 Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
+- Si PlatformIO falla con `No module named 'intelhex'`: `~/.platformio/penv/Scripts/python -m pip install intelhex`.
 
 ## Decisiones y gotchas ya resueltos
 - MongoDB debe ser >= 4.2 (se usa `mongo:4.4`). Con `mongo:3.6` Orion-LD se cae:

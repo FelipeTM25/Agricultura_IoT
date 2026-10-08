@@ -29,6 +29,7 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
 | `docker-compose.yml` | Definicion de todos los servicios                       |
 | `ejemplos-api.sh`    | Peticiones de ejemplo para probar el flujo completo     |
 | `gestor/`            | Gestor de Orion: API en FastAPI (`api/`) y front en React (`front/`) |
+| `sensor-lilygo/`     | Firmware (PlatformIO) del nodo LilyGO T-Beam que envia las lecturas a Orion por WiFi |
 
 ## Despliegue en EC2
 
@@ -161,6 +162,29 @@ ADMIN_USER=admin ADMIN_PASSWORD=admin JWT_SECRET=dev ORION_URL=http://<host-orio
 npm install
 npm run dev
 ```
+
+## Nodo sensor (LilyGO T-Beam)
+
+Firmware en `sensor-lilygo/`. Cada 30 s promedia 20 muestras y actualiza en Orion la
+entidad `sensor01` (tipo `SensorAgricola`) por WiFi.
+
+| Sensor | Conexion | Atributo en Orion |
+|--------|----------|-------------------|
+| HDC1080 | I2C de la placa: SDA 21, SCL 22, 3V3, GND | `temperatura` (°C), `humedad` (% aire) |
+| CJMCU-3216 (AP3216C) | I2C de la placa: SDA 21, SCL 22, 3V3, GND | `luz` (lux), `radiacion` (cuentas IR 0-1023) |
+| Humedad de suelo capacitivo | salida analogica a GPIO36 (VP), 3V3, GND | `humedadSuelo` (%) |
+| GPS de la placa | interno (Serial1) | `ubicacion` (geo:json) |
+
+Pasos:
+
+1. Copiar `sensor-lilygo/include/secretos.example.h` como `secretos.h` y poner la red
+   WiFi (2.4 GHz) y el host de Orion.
+2. Abrir `sensor-lilygo/` en VS Code con PlatformIO y usar *Upload and Monitor*.
+3. Calibrar la humedad de suelo: anotar el valor `crudo` que imprime el monitor con el
+   sensor al aire y dentro de agua, y ponerlos en `SUELO_SECO_RAW` / `SUELO_MOJADO_RAW`
+   (`src/main.cpp`).
+
+El puerto 1026 de Orion debe estar abierto en el Security Group para que el nodo llegue.
 
 ## Conectar Grafana a CrateDB
 
