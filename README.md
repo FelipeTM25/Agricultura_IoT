@@ -20,6 +20,7 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
 | QuantumLeap | `orchestracities/quantumleap` | 8668   | Convierte las notificaciones en series de tiempo |
 | CrateDB     | `crate`                       | 4200, 5432 | Almacena el historico                       |
 | Grafana     | `grafana/grafana`             | 3000   | Tableros de visualizacion                       |
+| Gestor      | se construye desde `gestor/`  | 8000   | Front y API para administrar Orion con login    |
 
 ## Contenido del repositorio
 
@@ -27,6 +28,7 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
 |----------------------|---------------------------------------------------------|
 | `docker-compose.yml` | Definicion de todos los servicios                       |
 | `ejemplos-api.sh`    | Peticiones de ejemplo para probar el flujo completo     |
+| `gestor/`            | Gestor de Orion: API en FastAPI (`api/`) y front en React (`front/`) |
 
 ## Despliegue en EC2
 
@@ -43,6 +45,7 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
   | 1026   | Orion, para que los sensores envien datos |
   | 3000   | Grafana                               |
   | 8668   | QuantumLeap (opcional, consultas del historico) |
+  | 8000   | Gestor de Orion                       |
 
   No abrir `27017`, `4200` ni `5432`: MongoDB y CrateDB no tienen autenticacion.
 
@@ -59,18 +62,24 @@ sudo apt update
 sudo apt install docker-compose
 ```
 
-### 4. Crear la carpeta del proyecto y el `docker-compose.yml`
+### 4. Copiar el proyecto a la instancia
+
+El gestor se construye desde la carpeta `gestor/`, asi que no basta con el
+`docker-compose.yml`: hay que copiar el repositorio completo. Desde tu equipo:
 
 ```bash
-mkdir ~/agricultura
-cd ~/agricultura
-nano docker-compose.yml   # pegar el contenido de docker-compose.yml de este repo
+scp -i "<tu-llave>.pem" -r docker-compose.yml gestor ubuntu@<DNS-publico-EC2>:agricultura/
 ```
 
-O copiarlo desde tu equipo:
+(antes crear la carpeta en la EC2 con `mkdir ~/agricultura`), o clonar el repo directamente en la EC2.
+
+Luego crear las credenciales del gestor en la EC2:
 
 ```bash
-scp -i "<tu-llave>.pem" docker-compose.yml ubuntu@<DNS-publico-EC2>:agricultura/
+cd ~/agricultura
+cp gestor/.env.example gestor/.env
+python3 -c "import secrets; print(secrets.token_hex(32))"   # pegar el resultado en JWT_SECRET
+nano gestor/.env                                             # cambiar ADMIN_PASSWORD y JWT_SECRET
 ```
 
 ### 5. Ajustar `vm.max_map_count` (requerido por CrateDB)
@@ -89,16 +98,17 @@ echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-cratedb.conf
 ### 6. Levantar los servicios
 
 ```bash
-sudo docker compose up -d
+sudo docker compose up -d --build
 ```
 
 ### 7. Verificar
 
 ```bash
-sudo docker ps -a                       # los 5 contenedores deben estar "Up"
+sudo docker ps -a                       # los 6 contenedores deben estar "Up"
 curl localhost:1026/version             # Orion
 curl localhost:8668/version             # QuantumLeap
 curl localhost:4200                     # CrateDB
+curl localhost:8000/docs                # Gestor (documentacion de la API)
 ```
 
 Grafana queda en `http://<DNS-publico-EC2>:3000` (usuario y contrasena inicial: `admin` / `admin`).
@@ -118,6 +128,38 @@ CrateDB:
 ```bash
 curl -X POST localhost:4200/_sql -H 'Content-Type: application/json' \
   -d '{"stmt":"SELECT entity_id, time_index, temperatura FROM doc.ettemperatura ORDER BY time_index"}'
+```
+
+## Gestor de Orion
+
+Interfaz web en `http://<DNS-publico-EC2>:8000` para administrar Orion sin usar
+`curl`. Se entra con el usuario y la contrasena de `gestor/.env` y permite:
+
+- Ver un resumen: estado de Orion, numero de sensores y suscripciones, lecturas actuales.
+- Crear, editar y borrar sensores (entidades). Al crear un `SensorAgricola` se
+  precargan temperatura, humedad, luz, radiacion y ubicacion GPS.
+- Crear y borrar suscripciones (por defecto hacia QuantumLeap).
+
+La API esta documentada en `http://<DNS-publico-EC2>:8000/docs`. Todas las rutas
+estan bajo `/api` y, salvo `/api/auth/login`, piden el token en la cabecera
+`Authorization: Bearer <token>`.
+
+Despues de cambiar el codigo del gestor, reconstruirlo con:
+
+```bash
+sudo docker compose up -d --build gestor
+```
+
+### Desarrollo local
+
+```bash
+# API (desde gestor/)
+pip install -r api/requirements.txt
+ADMIN_USER=admin ADMIN_PASSWORD=admin JWT_SECRET=dev ORION_URL=http://<host-orion>:1026   uvicorn api.main:app --reload
+
+# Front (desde gestor/front/, en otra terminal). Las llamadas a /api van al puerto 8000.
+npm install
+npm run dev
 ```
 
 ## Conectar Grafana a CrateDB

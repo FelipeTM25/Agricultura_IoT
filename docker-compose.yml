@@ -19,6 +19,7 @@
 #   4200  CrateDB      consola web / API SQL
 #   5432  CrateDB      protocolo PostgreSQL (lo usa Grafana)
 #   27017 MongoDB      base de datos de Orion
+#   8000  Gestor       front y API para administrar Orion (requiere login)
 #
 # Antes de levantarlo, CrateDB necesita vm.max_map_count >= 262144 en el host
 # (ver README.md).
@@ -115,6 +116,27 @@ services:
       - "3000:3000"
     volumes:
       - grafana:/var/lib/grafana
+
+  # ---------------------------------------------------------------------------
+  # Gestor: API (FastAPI) + front (React) para administrar las entidades y
+  # suscripciones de Orion con usuario y contrasena. Se construye desde
+  # ./gestor y lee las credenciales de gestor/.env (ver gestor/.env.example).
+  # Docs de la API en http://<host>:8000/docs
+  # ---------------------------------------------------------------------------
+  gestor:
+    build: ./gestor
+    container_name: gestor
+    depends_on:
+      - orion
+    networks:
+      - default
+    ports:
+      - "8000:8000"
+    environment:
+      - ORION_URL=http://orion:1026
+    env_file:
+      - ./gestor/.env
+    restart: unless-stopped
 
 networks:
   default:

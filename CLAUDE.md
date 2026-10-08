@@ -11,6 +11,15 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
 - `docker-compose.yml`: todos los servicios. Debe mantenerse identico al de la EC2.
 - `ejemplos-api.sh`: peticiones de ejemplo (crear sensor01, suscribir QuantumLeap, PATCH, GET). Recibe el host como parametro.
 - `README.md`: pasos de despliegue en EC2 para quien clone el repo.
+- `gestor/`: gestor de Orion en un solo contenedor (puerto 8000). Dockerfile multi-etapa:
+  compila `front/` (React + Vite) y lo sirve como estatico desde `api/` (FastAPI, rutas bajo `/api`,
+  docs en `/docs`). Login de un unico admin con JWT; credenciales en `gestor/.env` (no se sube,
+  plantilla en `gestor/.env.example`). La API habla con Orion por NGSI-v2 (`ORION_URL`).
+
+## Modelo del sensor
+Placa LilyGO (aun sin conectar). Entidad NGSI-v2 tipo `SensorAgricola` con atributos `temperatura`,
+`humedad`, `luz`, `radiacion` (Number) y `ubicacion` (geo:json Point, coordenadas [lon, lat]).
+Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
 
 ## Decisiones y gotchas ya resueltos
 - MongoDB debe ser >= 4.2 (se usa `mongo:4.4`). Con `mongo:3.6` Orion-LD se cae:
@@ -29,8 +38,12 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
 - Carpeta del proyecto en la EC2: `~/agricultura` (volumenes `agricultura_mongo-db`, `agricultura_crate-db`, `agricultura_grafana`).
 - Ubuntu x86_64, 7.6 GB RAM, Docker 29.1.3, Compose 2.40.3 (instalado con `apt install docker-compose`).
 - `vm.max_map_count` ya viene en 1048576.
-- Estado al 2026-10-08: los 5 contenedores arriba, Orion sin entidades ni suscripciones (base vacia).
-- El compose de la EC2 tiene la misma configuracion que el del repo pero sin los comentarios nuevos.
+- Estado al 2026-10-08: 6 contenedores arriba (los 5 de FIWARE + `gestor` en :8000, puerto ya abierto
+  en el Security Group). Orion sin entidades ni suscripciones (base vacia).
+- El compose y `gestor/` de la EC2 son los del repo (subidos con tar por ssh, sin node_modules).
+  Respaldo del compose anterior: `~/agricultura/docker-compose.yml.bak-2026-10-08`.
+- `gestor/.env` de la EC2 se genero alli con password aleatoria (permisos 600); verla con
+  `grep ADMIN_PASSWORD ~/agricultura/gestor/.env`.
 
 ### Instancia vieja (ya no se usa)
 - `ec2-98-85-255-160.compute-1.amazonaws.com`, carpeta `~/proyecto1`, usa volumen `mongo-db4`.

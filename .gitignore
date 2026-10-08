@@ -2,3 +2,8 @@
 *.pem
 *.key
 .env
+
+# Dependencias y compilados del gestor
+node_modules/
+dist/
+__pycache__/
