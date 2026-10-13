@@ -18,7 +18,9 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
 - `gestor/`: gestor de Orion en un solo contenedor (host :80 -> contenedor 8000). Dockerfile multi-etapa:
   compila `front/` (React + Vite) y lo sirve como estatico desde `api/` (FastAPI, rutas bajo `/api`,
   docs en `/docs`). Login de un unico admin con JWT; credenciales en `gestor/.env` (no se sube,
-  plantilla en `gestor/.env.example`). La API habla con Orion por NGSI-v2 (`ORION_URL`).
+  plantilla en `gestor/.env.example`). La API habla con Orion por NGSI-v2 (`ORION_URL`) y lee el
+  historico de QuantumLeap (`QUANTUMLEAP_URL`, `/api/entidades/{id}/historico`, todos los atributos
+  numericos). `GraficaLinea.jsx` es copia de la de la landing (solo cambia el import de `formatear`).
 
 - `sensor-lilygo/`: firmware PlatformIO del nodo (antes `TXlora`, que transmitia por LoRa para un
   examen). Credenciales en `include/secretos.h` (no se sube, plantilla `secretos.example.h`).
@@ -47,6 +49,8 @@ Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
   `reports wire version 6, but this version of libmongoc requires at least 8`.
   Si un volumen fue creado con Mongo viejo, Mongo nuevo no lo abre: hay que usar un volumen limpio.
 - Orion-LD acepta la API NGSI-v2 (`/v2/...`), no hace falta cambiar a `fiware/orion`.
+- MongoDB es la base de Orion: BD `orion`, colecciones `entities` (estado actual, una por entidad) y
+  `csubs` (suscripciones). Nadie mas la usa; el historico vive en CrateDB.
 - Consultas a QuantumLeap: llevar la cabecera `Fiware-ServicePath: /` (sin ella responde 404 aunque
   haya datos) y no pedir con `attrs=` un atributo que aun no existe como columna en CrateDB (falla
   la consulta entera); la landing pide todo y filtra.
@@ -61,16 +65,16 @@ Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
   `ssh -i "../llavesIoT.pem" ubuntu@ec2-3-234-196-13.compute-1.amazonaws.com`
 - IP elastica 3.234.196.13 (desde 2026-10-13; antes la IP cambiaba en cada encendido). Liberarla
   (Actions > Release) al terminar el semestre: se cobra aunque la instancia este apagada.
-- La instancia se apaga sola entre sesiones; con `restart: unless-stopped` los 6 servicios vuelven solos.
+- La instancia se apaga sola entre sesiones; con `restart: unless-stopped` los 7 servicios vuelven solos.
 - Carpeta del proyecto en la EC2: `~/agricultura` (volumenes `agricultura_mongo-db`, `agricultura_crate-db`, `agricultura_grafana`).
 - Ubuntu x86_64, 7.6 GB RAM, Docker 29.1.3, Compose 2.40.3 (instalado con `apt install docker-compose`).
 - `vm.max_map_count` ya viene en 1048576.
 - Estado al 2026-10-13: 7 contenedores arriba (los 5 de FIWARE + `gestor` en :80 + `landing` en :443,
   puertos abiertos en el Security Group; el 8000 ya no se usa).
-  Respaldo del compose anterior: `~/agricultura/docker-compose.yml.bak-2026-10-13`. Orion sin entidades ni suscripciones (base vacia): falta crear la
-  suscripcion a QuantumLeap y que el nodo escriba.
-- El compose y `gestor/` de la EC2 son los del repo (subidos con tar por ssh, sin node_modules).
-  Respaldo del compose anterior: `~/agricultura/docker-compose.yml.bak-2026-10-08`.
+- El nodo escribe `sensor01` en Orion por UPBWiFi. Suscripcion Orion -> QuantumLeap creada el
+  2026-10-13 (`6ace58aa4abd323b28ea3081`, tipo SensorAgricola, idPattern .*): CrateDB ya guarda historico.
+- El compose, `gestor/` y `landing/` de la EC2 son los del repo (subidos con tar por ssh, sin
+  node_modules ni .env). Respaldos del compose: `~/agricultura/docker-compose.yml.bak-2026-10-08` y `.bak-2026-10-13`.
 - `gestor/.env` de la EC2 se genero alli con password aleatoria (permisos 600); verla con
   `grep ADMIN_PASSWORD ~/agricultura/gestor/.env`.
 
