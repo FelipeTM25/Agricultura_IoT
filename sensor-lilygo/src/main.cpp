@@ -78,6 +78,11 @@
 #define SUELO_SECO_RAW              3000
 #define SUELO_MOJADO_RAW            1300
 
+// Un sensor capacitivo conectado nunca baja de ~1000 (ni metido en agua). Una lectura
+// por debajo de esto es que al pin no le llega senal (cable, 3V3/GND o pin equivocado):
+// esa muestra se descarta en vez de mandarse como "100 % de humedad".
+#define SUELO_CRUDO_MINIMO          200
+
 // ---------------------------------------------------------------------------
 // Máquina de estados
 // ---------------------------------------------------------------------------
@@ -451,9 +456,11 @@ void chirp() {
     }
   }
 
-  // Humedad del suelo (analogico, siempre entrega un valor)
+  // Humedad del suelo (analogico): solo cuenta si al pin le llega senal
   ultimoCrudoSuelo = analogRead(HUMEDAD_SUELO_PIN);
-  agregar(HUMEDAD_SUELO, porcentajeSuelo(ultimoCrudoSuelo));
+  if (ultimoCrudoSuelo >= SUELO_CRUDO_MINIMO) {
+    agregar(HUMEDAD_SUELO, porcentajeSuelo(ultimoCrudoSuelo));
+  }
 
   Serial.print(todoOk ? '.' : 'x');
 
@@ -479,7 +486,12 @@ void pruning() {
 
     campo(ETIQUETA_VARIABLE[k]);
     if (!r.valido) {
-      Serial.println("sin lecturas validas");
+      Serial.println("sin lecturas validas, no se envia");
+      if (k == HUMEDAD_SUELO) {
+        sangria();
+        Serial.printf("^ crudo %u: no llega senal al GPIO%d, revisa el cable de senal y 3V3/GND del sensor\n",
+                      ultimoCrudoSuelo, HUMEDAD_SUELO_PIN);
+      }
       continue;
     }
 
@@ -594,7 +606,7 @@ static void refrescarPlaca() {
     u8g2->drawStr(0, 23, v[TEMPERATURA].valido ? buf : "T/H: sin sensor");
 
     snprintf(buf, sizeof(buf), "Suelo %.0f%%", v[HUMEDAD_SUELO].promedio);
-    u8g2->drawStr(0, 36, buf);
+    u8g2->drawStr(0, 36, v[HUMEDAD_SUELO].valido ? buf : "Suelo: sin senal");
 
     snprintf(buf, sizeof(buf), "Luz %.0f  IR %.0f", v[LUZ].promedio, v[RADIACION].promedio);
     u8g2->drawStr(0, 49, v[LUZ].valido ? buf : "Luz: sin sensor");
