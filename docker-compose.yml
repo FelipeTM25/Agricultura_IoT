@@ -19,7 +19,11 @@
 #   4200  CrateDB      consola web / API SQL
 #   5432  CrateDB      protocolo PostgreSQL (lo usa Grafana)
 #   27017 MongoDB      base de datos de Orion
-#   8000  Gestor       front y API para administrar Orion (requiere login)
+#   80    Gestor       front y API para administrar Orion (requiere login)
+#   443   Landing      pagina publica con lecturas e historico (sin login, HTTP)
+#
+# Todos los servicios tienen restart: unless-stopped para que vuelvan a
+# arrancar solos cuando la instancia se apaga y se enciende.
 #
 # Antes de levantarlo, CrateDB necesita vm.max_map_count >= 262144 en el host
 # (ver README.md).
@@ -35,6 +39,7 @@ services:
     image: fiware/orion-ld
     hostname: orion
     container_name: orion
+    restart: unless-stopped
     depends_on:
       - mongo-db
     networks:
@@ -59,6 +64,7 @@ services:
     image: orchestracities/quantumleap
     hostname: quantumleap
     container_name: fiware-quantumleap
+    restart: unless-stopped
     ports:
       - "8668:8668"
     depends_on:
@@ -76,6 +82,7 @@ services:
     image: mongo:4.4
     hostname: mongo-db
     container_name: db-mongo
+    restart: unless-stopped
     expose:
       - "27017"
     ports:
@@ -93,6 +100,7 @@ services:
     image: crate
     hostname: crate-db
     container_name: db-crate
+    restart: unless-stopped
     ports:
       - "4200:4200"
       - "4300:4300"
@@ -110,6 +118,7 @@ services:
   grafana:
     image: grafana/grafana
     container_name: grafana
+    restart: unless-stopped
     depends_on:
       - crate-db
     ports:
@@ -121,7 +130,7 @@ services:
   # Gestor: API (FastAPI) + front (React) para administrar las entidades y
   # suscripciones de Orion con usuario y contrasena. Se construye desde
   # ./gestor y lee las credenciales de gestor/.env (ver gestor/.env.example).
-  # Docs de la API en http://<host>:8000/docs
+  # Docs de la API en http://<host>/docs
   # ---------------------------------------------------------------------------
   gestor:
     build: ./gestor
@@ -131,11 +140,32 @@ services:
     networks:
       - default
     ports:
-      - "8000:8000"
+      - "80:8000"
     environment:
       - ORION_URL=http://orion:1026
     env_file:
       - ./gestor/.env
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Landing: pagina publica (sin login) con las lecturas actuales de Orion y el
+  # historico de QuantumLeap/CrateDB. Su API es de solo lectura. Se construye
+  # desde ./landing con el mismo stack del gestor (FastAPI + React).
+  # Se publica en el 443 pero sirve HTTP plano: abrir con http://<host>:443
+  # ---------------------------------------------------------------------------
+  landing:
+    build: ./landing
+    container_name: landing
+    depends_on:
+      - orion
+      - quantumleap
+    networks:
+      - default
+    ports:
+      - "443:8000"
+    environment:
+      - ORION_URL=http://orion:1026
+      - QUANTUMLEAP_URL=http://quantumleap:8668
     restart: unless-stopped
 
 networks:
