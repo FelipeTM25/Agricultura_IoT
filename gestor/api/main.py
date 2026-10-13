@@ -1,16 +1,19 @@
-"""API del gestor de Orion: login del administrador, entidades, suscripciones e historico.
+"""API del gestor de Orion: login del administrador, entidades, suscripciones, historico y limpieza.
 
 Todas las rutas viven bajo /api. La documentacion interactiva queda en /docs.
 Si existe la carpeta static/ (el front de React ya compilado), se sirve en /.
 """
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, historico, orion
+from . import auth, config, historico, orion
 from .modelos import Atributo, Credenciales, EntidadNueva, NombreAtributo, SuscripcionNueva
 
 LIMITE = 1000  # maximo que Orion devuelve por pagina
@@ -64,10 +67,41 @@ async def ver_entidad(entidad_id: str):
     return (await orion.pedir("GET", f"/v2/entities/{quote(entidad_id, safe='')}")).json()
 
 
+URL_QUANTUMLEAP = SuscripcionNueva.model_fields["url_notificacion"].default
+
+
+async def asegurar_suscripcion_historico(tipo: str) -> dict:
+    """Crea la suscripcion Orion -> QuantumLeap para `tipo`, salvo que ya haya una que lo cubra.
+
+    Cubre si notifica a QuantumLeap, aplica a ese tipo (o a cualquiera) y a todos los ids (.*).
+    Asi crear varios sensores del mismo tipo no llena Orion de suscripciones repetidas.
+    """
+    existentes = (await orion.pedir("GET", "/v2/subscriptions", params={"limit": LIMITE})).json()
+    for s in existentes:
+        if s.get("notification", {}).get("http", {}).get("url") != URL_QUANTUMLEAP:
+            continue
+        if s.get("status", "active") not in ("active", "failed"):
+            continue
+        for e in s.get("subject", {}).get("entities", []):
+            if e.get("type") in (tipo, None) and e.get("idPattern") == ".*":
+                return {"estado": "existente", "id": s["id"]}
+
+    nueva = SuscripcionNueva(descripcion=f"Historico de {tipo} en CrateDB - creada automaticamente", tipo_entidad=tipo)
+    respuesta = await orion.pedir("POST", "/v2/subscriptions", json=nueva.a_ngsi())
+    return {"estado": "creada", "id": respuesta.headers.get("Location", "").rsplit("/", 1)[-1]}
+
+
 @protegida.post("/entidades", status_code=status.HTTP_201_CREATED, tags=["entidades"])
 async def crear_entidad(entidad: EntidadNueva):
     await orion.pedir("POST", "/v2/entities", json=entidad.a_ngsi())
-    return {"id": entidad.id}
+    if not entidad.guardar_historico:
+        return {"id": entidad.id, "suscripcion": None}
+    # La entidad ya quedo creada: si falla la suscripcion se informa sin deshacer lo anterior
+    try:
+        suscripcion = await asegurar_suscripcion_historico(entidad.type)
+    except HTTPException as e:
+        suscripcion = {"estado": "error", "detalle": e.detail}
+    return {"id": entidad.id, "suscripcion": suscripcion}
 
 
 @protegida.put("/entidades/{entidad_id}/atributos", status_code=status.HTTP_204_NO_CONTENT, tags=["entidades"])
@@ -99,6 +133,29 @@ async def historico_entidad(entidad_id: str, tipo: str | None = None, horas: int
     return await historico.consultar(entidad_id, tipo, horas)
 
 
+@protegida.get("/entidades/{entidad_id}/exportar", tags=["entidades"])
+async def exportar_entidad(
+    entidad_id: str,
+    desde: datetime,
+    hasta: datetime,
+    tipo: str | None = None,
+    atributos: str = Query("", description="Separados por coma. Vacio = todos los numericos"),
+    intervalo_min: int = Query(0, ge=0, le=1440, description="0 = cada lectura; si no, promedio por intervalo"),
+    formato: Literal["csv", "json"] = "csv",
+    separador: Literal[",", ";"] = ",",
+):
+    """Descarga el historico de una entidad (QuantumLeap -> CrateDB) como CSV o JSON."""
+    desde = desde if desde.tzinfo else desde.replace(tzinfo=timezone.utc)
+    hasta = hasta if hasta.tzinfo else hasta.replace(tzinfo=timezone.utc)
+    if hasta <= desde:
+        raise HTTPException(422, "La fecha final debe ser posterior a la inicial")
+
+    lista = [a.strip() for a in atributos.split(",") if a.strip()]
+    contenido, tipo_mime = await historico.exportar(entidad_id, tipo, desde, hasta, lista, intervalo_min, formato, separador)
+    nombre = f"{entidad_id}_{desde:%Y%m%d-%H%M}_{hasta:%Y%m%d-%H%M}.{formato}"
+    return Response(contenido, media_type=tipo_mime, headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
 # --- Suscripciones ------------------------------------------------------------
 
 @protegida.get("/suscripciones", tags=["suscripciones"])
@@ -117,6 +174,35 @@ async def crear_suscripcion(suscripcion: SuscripcionNueva):
 async def borrar_suscripcion(suscripcion_id: str):
     await orion.pedir("DELETE", f"/v2/subscriptions/{quote(suscripcion_id, safe='')}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Limpieza (CrateDB -> Postgres) -------------------------------------------
+
+async def _limpieza(metodo: str, ruta: str, timeout: float):
+    try:
+        async with httpx.AsyncClient(base_url=config.LIMPIEZA_URL, timeout=timeout) as cliente:
+            r = await cliente.request(metodo, ruta)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"No se pudo conectar con el servicio de limpieza ({config.LIMPIEZA_URL}): {e}")
+    if r.status_code >= 400:
+        try:
+            detalle = r.json().get("detail", r.text)
+        except ValueError:
+            detalle = r.text
+        raise HTTPException(r.status_code, f"Limpieza: {detalle}")
+    return r.json()
+
+
+@protegida.get("/limpieza", tags=["limpieza"])
+async def estado_limpieza():
+    """Ultimas ejecuciones, resumen de los datos limpios en Postgres y reglas aplicadas."""
+    return await _limpieza("GET", "/estado", 15)
+
+
+@protegida.post("/limpieza/ejecutar", tags=["limpieza"])
+async def ejecutar_limpieza():
+    """Limpia ahora lo nuevo de CrateDB y lo guarda en Postgres (ademas de la limpieza automatica)."""
+    return await _limpieza("POST", "/limpiar", 300)
 
 
 app.include_router(publica)

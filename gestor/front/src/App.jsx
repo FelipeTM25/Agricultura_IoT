@@ -4,6 +4,7 @@ import Icono from './componentes/Icono.jsx'
 import Sidebar from './componentes/Sidebar.jsx'
 import Entidades from './paginas/Entidades.jsx'
 import Historico from './paginas/Historico.jsx'
+import Limpieza from './paginas/Limpieza.jsx'
 import Login from './paginas/Login.jsx'
 import Resumen from './paginas/Resumen.jsx'
 import Suscripciones from './paginas/Suscripciones.jsx'
@@ -15,6 +16,7 @@ const PAGINAS = {
   entidades: { titulo: 'Sensores', icono: 'sensor', componente: Entidades },
   historico: { titulo: 'Histórico', icono: 'grafica', componente: Historico },
   suscripciones: { titulo: 'Suscripciones', icono: 'campana', componente: Suscripciones },
+  limpieza: { titulo: 'Limpieza de datos', icono: 'filtro', componente: Limpieza },
 }
 
 const paginaDeLaUrl = () => {

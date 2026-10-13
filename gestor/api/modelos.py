@@ -29,13 +29,16 @@ class EntidadNueva(BaseModel):
     id: str = Field(min_length=1, max_length=256, pattern=NOMBRE_NGSI)
     type: str = Field("SensorAgricola", min_length=1, max_length=256, pattern=NOMBRE_NGSI)
     atributos: dict[NombreAtributo, Atributo] = {}
+    # Si es True, se asegura que exista una suscripcion de su tipo hacia QuantumLeap
+    guardar_historico: bool = False
 
     def a_ngsi(self) -> dict:
         return {"id": self.id, "type": self.type, **{n: a.a_ngsi() for n, a in self.atributos.items()}}
 
 
 class SuscripcionNueva(BaseModel):
-    descripcion: str = ""
+    # Orion rechaza estos caracteres en la descripcion: < > " ' = ; ( )
+    descripcion: str = Field("", pattern=r"^[^<>\"'=;()]*$")
     tipo_entidad: str = Field(min_length=1, pattern=NOMBRE_NGSI)
     patron_id: str = ".*"
     # Vacio = notificar cuando cambie cualquier atributo

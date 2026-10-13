@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import GraficaLinea from '../componentes/GraficaLinea.jsx'
 import Icono from '../componentes/Icono.jsx'
 import { ICONO_VARIABLE, formatear } from '../ngsi.js'
+import FormExportar from './FormExportar.jsx'
 
 const RANGOS = [
   { horas: 1, texto: '1 h' },
@@ -24,6 +25,8 @@ export default function Historico() {
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const [verTabla, setVerTabla] = useState(false)
+  const [exportando, setExportando] = useState(false)
+  const [aviso, setAviso] = useState('')
 
   useEffect(() => {
     api
@@ -87,6 +90,11 @@ export default function Historico() {
         <button className="boton boton-suave" onClick={cargar} disabled={cargando || !entidad}>
           <Icono nombre="recargar" /> Actualizar
         </button>
+        {entidad && (
+          <button className="boton boton-primario" onClick={() => setExportando(true)}>
+            <Icono nombre="descargar" /> Exportar
+          </button>
+        )}
         {nombres.length > 0 && (
           <button className="boton boton-suave" onClick={() => setVerTabla((v) => !v)} aria-pressed={verTabla}>
             <Icono nombre={verTabla ? 'grafica' : 'tabla'} /> {verTabla ? 'Ver gráficas' : 'Ver tabla'}
@@ -96,11 +104,24 @@ export default function Historico() {
 
       {datos && (
         <p className="texto-suave">
-          {datos.puntos} lecturas en CrateDB en este rango
+          {datos.puntos} {datos.puntos === 1 ? 'lectura' : 'lecturas'} en CrateDB en este rango
           {datos.puntos ? `, promediadas cada ${datos.intervalo_min} min` : ''}.
         </p>
       )}
+      {aviso && <p className="aviso aviso-ok">{aviso}</p>}
       {error && <p className="aviso aviso-error">{error}</p>}
+
+      {exportando && entidad && (
+        <FormExportar
+          entidad={entidad}
+          delHistorico={nombres}
+          onCerrar={() => setExportando(false)}
+          onExportado={(mensaje) => {
+            setExportando(false)
+            setAviso(mensaje)
+          }}
+        />
+      )}
 
       {!entidad ? (
         <div className="tarjeta vacio">

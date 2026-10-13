@@ -20,6 +20,7 @@ export default function FormEntidad({ entidad, onCerrar, onGuardado }) {
   const [filas, setFilas] = useState(() => (editando ? filasDeEntidad(entidad) : filasDePlantilla()))
   const [error, setError] = useState('')
   const [guardando, setGuardando] = useState(false)
+  const [guardarHistorico, setGuardarHistorico] = useState(true)
 
   const cambiarFila = (clave, cambios) => setFilas((fs) => fs.map((f) => (f.clave === clave ? { ...f, ...cambios } : f)))
   const quitarFila = (clave) => setFilas((fs) => fs.filter((f) => f.clave !== clave))
@@ -38,10 +39,21 @@ export default function FormEntidad({ entidad, onCerrar, onGuardado }) {
         // Los atributos que estaban en Orion y se quitaron del formulario se borran
         const quitados = filasDeEntidad(entidad).map((f) => f.nombre).filter((n) => !(n in atributos))
         for (const nombre of quitados) await api.borrarAtributo(entidad.id, nombre)
+        onGuardado(`Sensor ${entidad.id} actualizado`)
       } else {
-        await api.crearEntidad({ id: id.trim(), type: tipo.trim(), atributos })
+        const { suscripcion } = await api.crearEntidad({
+          id: id.trim(),
+          type: tipo.trim(),
+          atributos,
+          guardar_historico: guardarHistorico,
+        })
+        const historico = {
+          creada: '. Se creó la suscripción a QuantumLeap: su histórico se guarda en CrateDB',
+          existente: `. Su histórico ya se guarda con la suscripción existente del tipo ${tipo.trim()}`,
+          error: `, pero no se pudo crear su suscripción: ${suscripcion?.detalle}`,
+        }
+        onGuardado(`Sensor ${id.trim()} creado${historico[suscripcion?.estado] ?? ''}`)
       }
-      onGuardado(editando ? `Sensor ${entidad.id} actualizado` : `Sensor ${id.trim()} creado`)
     } catch (err) {
       setError(err.message)
       setGuardando(false)
@@ -119,6 +131,13 @@ export default function FormEntidad({ entidad, onCerrar, onGuardado }) {
             </div>
           ))}
         </div>
+
+        {!editando && (
+          <label className="casilla">
+            <input type="checkbox" checked={guardarHistorico} onChange={(e) => setGuardarHistorico(e.target.checked)} />
+            Guardar su histórico en CrateDB (crea la suscripción a QuantumLeap si su tipo todavía no tiene una)
+          </label>
+        )}
 
         {error && <p className="aviso aviso-error">{error}</p>}
 

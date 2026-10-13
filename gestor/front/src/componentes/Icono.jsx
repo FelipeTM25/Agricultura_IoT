@@ -87,6 +87,13 @@ const TRAZOS = {
       <path d="M3 10h18M9 10v10" />
     </>
   ),
+  descargar: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5M12 15V3" />
+    </>
+  ),
+  filtro: <path d="M3 4h18l-7 8v6l-4 2v-8z" />,
   dato: (
     <>
       <circle cx="12" cy="12" r="9" />

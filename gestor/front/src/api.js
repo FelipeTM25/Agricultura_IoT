@@ -29,7 +29,8 @@ function mensajeDeError(detalle, status) {
   return `Error ${status}`
 }
 
-async function pedir(metodo, ruta, cuerpo) {
+// comoArchivo: devuelve { blob, nombre } en vez de JSON (para descargas)
+async function pedir(metodo, ruta, cuerpo, { comoArchivo = false } = {}) {
   const cabeceras = {}
   if (cuerpo !== undefined) cabeceras['Content-Type'] = 'application/json'
   if (sesion.token) cabeceras.Authorization = `Bearer ${sesion.token}`
@@ -58,7 +59,22 @@ async function pedir(metodo, ruta, cuerpo) {
     }
     throw new Error(mensajeDeError(detalle, respuesta.status))
   }
+  if (comoArchivo) {
+    const disposicion = respuesta.headers.get('Content-Disposition') ?? ''
+    const nombre = /filename="([^"]+)"/.exec(disposicion)?.[1] ?? 'exportacion'
+    return { blob: await respuesta.blob(), nombre }
+  }
   return respuesta.status === 204 ? null : respuesta.json()
+}
+
+// Guarda un archivo descargado con su nombre
+export function guardarArchivo({ blob, nombre }) {
+  const url = URL.createObjectURL(blob)
+  const enlace = document.createElement('a')
+  enlace.href = url
+  enlace.download = nombre
+  enlace.click()
+  URL.revokeObjectURL(url)
 }
 
 const id = (valor) => encodeURIComponent(valor)
@@ -74,6 +90,11 @@ export const api = {
   borrarEntidad: (entidadId) => pedir('DELETE', `/entidades/${id(entidadId)}`),
   historico: (entidadId, tipo, horas) =>
     pedir('GET', `/entidades/${id(entidadId)}/historico?tipo=${id(tipo)}&horas=${horas}`),
+  exportar: (entidadId, opciones) =>
+    pedir('GET', `/entidades/${id(entidadId)}/exportar?${new URLSearchParams(opciones)}`, undefined, { comoArchivo: true }),
+
+  limpieza: () => pedir('GET', '/limpieza'),
+  ejecutarLimpieza: () => pedir('POST', '/limpieza/ejecutar'),
 
   suscripciones: () => pedir('GET', '/suscripciones'),
   crearSuscripcion: (suscripcion) => pedir('POST', '/suscripciones', suscripcion),
