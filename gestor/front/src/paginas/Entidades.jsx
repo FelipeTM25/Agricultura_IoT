@@ -112,6 +112,9 @@ export default function Entidades() {
                     </div>
                   </td>
                   <td className="columna-acciones">
+                    <a className="boton-icono" href={`#historico/${encodeURIComponent(entidad.id)}`} aria-label={`Histórico de ${entidad.id}`} title="Ver histórico">
+                      <Icono nombre="grafica" />
+                    </a>
                     <button className="boton-icono" onClick={() => setFormulario(entidad)} aria-label={`Editar ${entidad.id}`} title="Editar">
                       <Icono nombre="lapiz" />
                     </button>

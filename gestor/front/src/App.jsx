@@ -3,19 +3,22 @@ import { sesion } from './api.js'
 import Icono from './componentes/Icono.jsx'
 import Sidebar from './componentes/Sidebar.jsx'
 import Entidades from './paginas/Entidades.jsx'
+import Historico from './paginas/Historico.jsx'
 import Login from './paginas/Login.jsx'
 import Resumen from './paginas/Resumen.jsx'
 import Suscripciones from './paginas/Suscripciones.jsx'
 
 // Opciones del sidebar. La pagina actual se guarda en la URL (#entidades) para que sobreviva a un F5.
+// Algunas paginas llevan un parametro despues de una barra: #historico/sensor01
 const PAGINAS = {
   resumen: { titulo: 'Resumen', icono: 'panel', componente: Resumen },
   entidades: { titulo: 'Sensores', icono: 'sensor', componente: Entidades },
+  historico: { titulo: 'Histórico', icono: 'grafica', componente: Historico },
   suscripciones: { titulo: 'Suscripciones', icono: 'campana', componente: Suscripciones },
 }
 
 const paginaDeLaUrl = () => {
-  const clave = window.location.hash.slice(1)
+  const clave = window.location.hash.slice(1).split('/')[0]
   return clave in PAGINAS ? clave : 'resumen'
 }
 

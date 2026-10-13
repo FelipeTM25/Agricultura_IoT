@@ -128,7 +128,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Gestor: API (FastAPI) + front (React) para administrar las entidades y
-  # suscripciones de Orion con usuario y contrasena. Se construye desde
+  # suscripciones de Orion con usuario y contrasena, y ver su historico (QuantumLeap). Se construye desde
   # ./gestor y lee las credenciales de gestor/.env (ver gestor/.env.example).
   # Docs de la API en http://<host>/docs
   # ---------------------------------------------------------------------------
@@ -137,12 +137,14 @@ services:
     container_name: gestor
     depends_on:
       - orion
+      - quantumleap
     networks:
       - default
     ports:
       - "80:8000"
     environment:
       - ORION_URL=http://orion:1026
+      - QUANTUMLEAP_URL=http://quantumleap:8668
     env_file:
       - ./gestor/.env
     restart: unless-stopped

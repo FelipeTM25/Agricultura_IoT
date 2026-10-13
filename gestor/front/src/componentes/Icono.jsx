@@ -68,6 +68,25 @@ const TRAZOS = {
       <circle cx="12" cy="10" r="3" />
     </>
   ),
+  brote: (
+    <>
+      <path d="M7 20h10M12 20v-8" />
+      <path d="M12 12C12 8 9 6 5 6c0 4 3 6 7 6z" />
+      <path d="M12 10c0-3 2.5-5 6-5 0 3-2.5 5-6 5z" />
+    </>
+  ),
+  grafica: (
+    <>
+      <path d="M3 3v18h18" />
+      <path d="M7 15l4-4 3 3 5-6" />
+    </>
+  ),
+  tabla: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18M9 10v10" />
+    </>
+  ),
   dato: (
     <>
       <circle cx="12" cy="12" r="9" />

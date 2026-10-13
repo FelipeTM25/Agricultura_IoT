@@ -1,4 +1,4 @@
-"""API del gestor de Orion: login del administrador, entidades y suscripciones.
+"""API del gestor de Orion: login del administrador, entidades, suscripciones e historico.
 
 Todas las rutas viven bajo /api. La documentacion interactiva queda en /docs.
 Si existe la carpeta static/ (el front de React ya compilado), se sirve en /.
@@ -7,10 +7,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, orion
+from . import auth, historico, orion
 from .modelos import Atributo, Credenciales, EntidadNueva, NombreAtributo, SuscripcionNueva
 
 LIMITE = 1000  # maximo que Orion devuelve por pagina
@@ -20,6 +20,7 @@ LIMITE = 1000  # maximo que Orion devuelve por pagina
 async def ciclo_de_vida(app: FastAPI):
     yield
     await orion.cliente.aclose()
+    await historico.cliente.aclose()
 
 
 app = FastAPI(title="Gestor Orion - Agricultura IoT", version="0.1.0", lifespan=ciclo_de_vida)
@@ -87,6 +88,15 @@ async def borrar_atributo(entidad_id: str, nombre: str):
 async def borrar_entidad(entidad_id: str):
     await orion.pedir("DELETE", f"/v2/entities/{quote(entidad_id, safe='')}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@protegida.get("/entidades/{entidad_id}/historico", tags=["entidades"])
+async def historico_entidad(entidad_id: str, tipo: str | None = None, horas: int = Query(24, ge=1, le=168)):
+    """Serie de tiempo de cada atributo numerico (QuantumLeap -> CrateDB), promediada por intervalos.
+
+    Solo hay datos si existe una suscripcion de Orion hacia QuantumLeap para esa entidad.
+    """
+    return await historico.consultar(entidad_id, tipo, horas)
 
 
 # --- Suscripciones ------------------------------------------------------------

@@ -144,6 +144,8 @@ Interfaz web en `http://<DNS-publico-EC2>` (puerto 80) para administrar Orion si
 - Crear, editar y borrar sensores (entidades). Al crear un `SensorAgricola` se
   precargan temperatura, humedad, luz, radiacion y ubicacion GPS.
 - Crear y borrar suscripciones (por defecto hacia QuantumLeap).
+- Ver el historico de cada sensor (graficas por atributo de 1 h a 7 dias, o tabla), leido de
+  QuantumLeap/CrateDB. Se llega desde *Historico* o desde el icono de grafica de cada sensor.
 
 La API esta documentada en `http://<DNS-publico-EC2>/docs`. Todas las rutas
 estan bajo `/api` y, salvo `/api/auth/login`, piden el token en la cabecera

@@ -72,6 +72,8 @@ export const api = {
   guardarAtributos: (entidadId, atributos) => pedir('PUT', `/entidades/${id(entidadId)}/atributos`, atributos),
   borrarAtributo: (entidadId, nombre) => pedir('DELETE', `/entidades/${id(entidadId)}/atributos/${id(nombre)}`),
   borrarEntidad: (entidadId) => pedir('DELETE', `/entidades/${id(entidadId)}`),
+  historico: (entidadId, tipo, horas) =>
+    pedir('GET', `/entidades/${id(entidadId)}/historico?tipo=${id(tipo)}&horas=${horas}`),
 
   suscripciones: () => pedir('GET', '/suscripciones'),
   crearSuscripcion: (suscripcion) => pedir('POST', '/suscripciones', suscripcion),

@@ -11,6 +11,7 @@ def _obligatoria(nombre: str) -> str:
 
 
 ORION_URL = os.getenv("ORION_URL", "http://localhost:1026").rstrip("/")
+QUANTUMLEAP_URL = os.getenv("QUANTUMLEAP_URL", "http://localhost:8668").rstrip("/")
 
 # Unico usuario del sistema por ahora: el administrador.
 ADMIN_USER = _obligatoria("ADMIN_USER")

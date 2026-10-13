@@ -12,9 +12,10 @@ const esNumerico = (tipo) => ['Number', 'Float', 'Integer'].includes(tipo)
 // Variables del sensor LilyGO: se precargan al crear un SensorAgricola
 const PLANTILLA_SENSOR = [
   { nombre: 'temperatura', tipo: 'Number', pista: '°C' },
-  { nombre: 'humedad', tipo: 'Number', pista: '%' },
+  { nombre: 'humedad', tipo: 'Number', pista: '% aire' },
+  { nombre: 'humedadSuelo', tipo: 'Number', pista: '% suelo' },
   { nombre: 'luz', tipo: 'Number', pista: 'lux' },
-  { nombre: 'radiacion', tipo: 'Number', pista: 'W/m²' },
+  { nombre: 'radiacion', tipo: 'Number', pista: 'IR 0-1023' },
   { nombre: 'ubicacion', tipo: 'geo:json' },
 ]
 
@@ -22,6 +23,7 @@ const PLANTILLA_SENSOR = [
 export const ICONO_VARIABLE = {
   temperatura: 'termometro',
   humedad: 'gota',
+  humedadSuelo: 'brote',
   luz: 'sol',
   radiacion: 'rayo',
   ubicacion: 'pin',
@@ -108,3 +110,9 @@ export function valorLegible(atributo) {
 
 export const atributosDe = (entidad) =>
   Object.entries(entidad).filter(([nombre]) => nombre !== 'id' && nombre !== 'type')
+
+// Numero con separadores en espanol y los decimales pedidos
+export const formatear = (valor, decimales = 2) =>
+  valor === undefined || valor === null
+    ? '—'
+    : Number(valor).toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: decimales })
