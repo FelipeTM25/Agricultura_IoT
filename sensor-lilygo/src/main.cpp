@@ -260,6 +260,88 @@ static const char *textoEstadoWifi(wl_status_t s) {
   }
 }
 
+// Lista las redes que ve la placa y dice si esta la configurada. El ESP32 solo ve redes
+// de 2.4 GHz: si la red no aparece aqui, o esta lejos o solo emite en 5 GHz.
+#define REDES_A_MOSTRAR 8
+static void escanearRedes() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  int n = WiFi.scanNetworks(); // ya vienen ordenadas de mejor a peor senal
+
+  campo("Redes");
+  if (n <= 0) {
+    Serial.println("no se ve ninguna red de 2.4 GHz");
+    return;
+  }
+  Serial.printf("%d visibles (2.4 GHz)\n", n);
+
+  int encontrada = -1;
+  for (int k = 0; k < n; k++) {
+    bool esLaNuestra = WiFi.SSID(k) == WIFI_SSID;
+    if (esLaNuestra && encontrada < 0) {
+      encontrada = k;
+    }
+    if (k < REDES_A_MOSTRAR || esLaNuestra) {
+      sangria();
+      Serial.printf("%s %-24s %4d dBm   canal %2d   %s\n",
+                    esLaNuestra ? ">" : " ",
+                    WiFi.SSID(k).c_str(),
+                    WiFi.RSSI(k),
+                    WiFi.channel(k),
+                    WiFi.encryptionType(k) == WIFI_AUTH_OPEN ? "abierta" : "con clave");
+    }
+  }
+
+  bool abierta = encontrada >= 0 && WiFi.encryptionType(encontrada) == WIFI_AUTH_OPEN;
+  bool sinClave = strlen(WIFI_PASSWORD) == 0;
+  sangria();
+  if (encontrada < 0) {
+    Serial.printf("^ \"%s\" no aparece: solo emite en 5 GHz o esta fuera de alcance\n", WIFI_SSID);
+  }
+  else if (abierta != sinClave) {
+    Serial.printf("^ \"%s\" es %s pero secretos.h tiene %s\n", WIFI_SSID,
+                  abierta ? "abierta" : "con clave", sinClave ? "la clave vacia" : "una clave");
+  }
+  else {
+    Serial.printf("^ \"%s\" esta al alcance\n", WIFI_SSID);
+  }
+  WiFi.scanDelete();
+}
+
+// Comprueba que desde esta red se llega a Orion. Distingue los tres problemas tipicos
+// de una red de universidad: DNS, portal cautivo (pide login en una pagina) y puerto
+// bloqueado.
+static void probarOrion() {
+  campo("Orion");
+  IPAddress ip;
+  if (!WiFi.hostByName(ORION_HOST, ip)) {
+    Serial.printf("no se pudo resolver %s (DNS de la red)\n", ORION_HOST);
+    return;
+  }
+
+  HTTPClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  http.begin(String("http://") + ORION_HOST + ":" + ORION_PUERTO + "/version");
+  int codigo = http.GET();
+  String cuerpo = codigo > 0 ? http.getString() : "";
+  http.end();
+
+  if (codigo == 200 && cuerpo.indexOf("orion") >= 0) {
+    Serial.printf("OK    %s (%s) responde\n", ORION_HOST, ip.toString().c_str());
+  }
+  else if (codigo >= 300 && codigo < 400) {
+    Serial.printf("redirige (HTTP %d): la red tiene portal cautivo y pide iniciar sesion\n", codigo);
+  }
+  else if (codigo > 0) {
+    Serial.printf("HTTP %d pero no es Orion: probable portal cautivo de la red\n", codigo);
+  }
+  else {
+    Serial.printf("sin respuesta de %s:%d (%s): la red bloquea el puerto o no hay salida a internet\n",
+                  ip.toString().c_str(), ORION_PUERTO, http.errorToString(codigo).c_str());
+  }
+}
+
 // Arranca la conexion y espera un rato a que quede lista. Si no se logra, el
 // ESP32 sigue reintentando solo (setAutoReconnect) y TRANSMITIR lo vuelve a
 // revisar en cada ciclo.
@@ -635,8 +717,10 @@ void setup() {
   campo("OLED");
   Serial.println(u8g2 ? "OK" : "no detectado");
 
+  escanearRedes();
+
   campo("WiFi");
-  Serial.printf("conectando a \"%s\"...\n", WIFI_SSID);
+  Serial.printf("conectando a \"%s\"%s...\n", WIFI_SSID, strlen(WIFI_PASSWORD) == 0 ? " (red abierta)" : "");
   iniciarWifi();
   sangria();
   if (WiFi.status() == WL_CONNECTED) {
@@ -646,8 +730,11 @@ void setup() {
     Serial.printf("%s, se sigue intentando en segundo plano\n", textoEstadoWifi(WiFi.status()));
   }
 
-  campo("Orion");
+  campo("Destino");
   Serial.printf("http://%s:%d   entidad %s (%s)\n", ORION_HOST, ORION_PUERTO, ENTIDAD_ID, ENTIDAD_TIPO);
+  if (WiFi.status() == WL_CONNECTED) {
+    probarOrion();
+  }
 
   estado = SALUDO;
   i = 0;
