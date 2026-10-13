@@ -1,0 +1,18 @@
+# Fuente de datos que Grafana crea sola al arrancar: el Postgres con los datos ya limpios.
+# Las credenciales llegan por variables de entorno (archivo .env de la raiz del repo).
+apiVersion: 1
+datasources:
+  - name: Postgres (datos limpios)
+    uid: postgres-limpios
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: $POSTGRES_USER
+    jsonData:
+      database: $POSTGRES_DB
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: $POSTGRES_PASSWORD
+    editable: false

@@ -9,8 +9,11 @@ Compose en una instancia EC2 de AWS con Ubuntu.
 ```
 Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
                     |                                          |
-                 MongoDB                                    CrateDB --> Grafana
-                                                          (historico)  (tableros)
+                 MongoDB                                    CrateDB (historico crudo)
+                                                               |
+                                                           limpieza (cada 15 min o con boton)
+                                                               |
+                                                           Postgres (datos limpios) --> Grafana
 ```
 
 | Servicio    | Imagen                        | Puerto | Funcion                                         |
@@ -19,7 +22,9 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
 | MongoDB     | `mongo:4.4`                   | 27017  | Base de datos de Orion                          |
 | QuantumLeap | `orchestracities/quantumleap` | 8668   | Convierte las notificaciones en series de tiempo |
 | CrateDB     | `crate`                       | 4200, 5432 | Almacena el historico                       |
-| Grafana     | `grafana/grafana`             | 3000   | Tableros de visualizacion                       |
+| Grafana     | `grafana/grafana`             | 3000   | Tableros (desde Postgres, ya provisionados)     |
+| Postgres    | `postgres:16-alpine`          | -      | Datos limpios (promedios cada 5 min)            |
+| Limpieza    | se construye desde `limpieza/`| -      | CrateDB -> reglas de limpieza -> Postgres       |
 | Gestor      | se construye desde `gestor/`  | 80     | Front y API para administrar Orion con login    |
 | Landing     | se construye desde `landing/` | 443    | Pagina publica con lecturas e historico         |
 
@@ -31,6 +36,9 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
 | `ejemplos-api.sh`    | Peticiones de ejemplo para probar el flujo completo     |
 | `gestor/`            | Gestor de Orion: API en FastAPI (`api/`) y front en React (`front/`) |
 | `landing/`           | Landing publica: API de solo lectura en FastAPI y front en React |
+| `limpieza/`          | Servicio que limpia el historico de CrateDB y lo guarda en Postgres |
+| `grafana/`           | Fuente de datos y tablero de Grafana que se cargan solos (provisioning) |
+| `.env.example`       | Plantilla del `.env` de la raiz (credenciales de Postgres) |
 | `sensor-lilygo/`     | Firmware (PlatformIO) del nodo LilyGO T-Beam que envia las lecturas a Orion por WiFi |
 
 ## Despliegue en EC2
@@ -68,11 +76,11 @@ sudo apt install docker-compose
 
 ### 4. Copiar el proyecto a la instancia
 
-El gestor y la landing se construyen desde `gestor/` y `landing/`, asi que no basta con el
+El gestor, la landing y la limpieza se construyen desde sus carpetas, asi que no basta con el
 `docker-compose.yml`: hay que copiar el repositorio completo. Desde tu equipo:
 
 ```bash
-scp -i "<tu-llave>.pem" -r docker-compose.yml gestor landing ubuntu@<DNS-publico-EC2>:agricultura/
+scp -i "<tu-llave>.pem" -r docker-compose.yml gestor landing limpieza grafana ubuntu@<DNS-publico-EC2>:agricultura/
 ```
 
 (antes crear la carpeta en la EC2 con `mkdir ~/agricultura`), o clonar el repo directamente en la EC2.
@@ -84,6 +92,14 @@ cd ~/agricultura
 cp gestor/.env.example gestor/.env
 python3 -c "import secrets; print(secrets.token_hex(32))"   # pegar el resultado en JWT_SECRET
 nano gestor/.env                                             # cambiar ADMIN_PASSWORD y JWT_SECRET
+```
+
+Y las de Postgres (las usan Postgres, la limpieza y Grafana; nadie tiene que escribirlas a mano):
+
+```bash
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_urlsafe(24))"  # pegar el resultado en POSTGRES_PASSWORD
+nano .env
 ```
 
 ### 5. Ajustar `vm.max_map_count` (requerido por CrateDB)
@@ -144,6 +160,10 @@ Interfaz web en `http://<DNS-publico-EC2>` (puerto 80) para administrar Orion si
 - Crear, editar y borrar sensores (entidades). Al crear un `SensorAgricola` se
   precargan temperatura, humedad, luz, radiacion y ubicacion GPS.
 - Crear y borrar suscripciones (por defecto hacia QuantumLeap).
+- Al crear un sensor, casilla *Guardar su historico*: crea la suscripcion a QuantumLeap de su tipo si
+  todavia no existe (si ya hay una, la reutiliza). Sirve para tipos nuevos de sensor.
+- Exportar el historico de un sensor (rango de fechas, atributos, agrupacion, CSV o JSON).
+- Ver y lanzar la limpieza de datos (*Limpieza de datos* -> *Limpiar ahora*).
 - Ver el historico de cada sensor (graficas por atributo de 1 h a 7 dias, o tabla), leido de
   QuantumLeap/CrateDB. Se llega desde *Historico* o desde el icono de grafica de cada sensor.
 
@@ -209,7 +229,28 @@ Pasos:
 
 El puerto 1026 de Orion debe estar abierto en el Security Group para que el nodo llegue.
 
-## Conectar Grafana a CrateDB
+## Limpieza de datos y Grafana
+
+El servicio `limpieza` lee cada 15 min (o con el boton del gestor) lo nuevo de CrateDB,
+descarta lo que no es un dato real y guarda en Postgres el promedio de cada 5 min:
+
+| Regla | Descarta |
+|-------|----------|
+| `fuera_de_rango` | Valores imposibles: temperatura fuera de -10..60 °C, humedad fuera de 0..100 %, luz < 0, etc. |
+| `sensor_sin_respuesta` | La humedad cuando la temperatura del mismo chip (HDC1080) fallo en ese instante |
+| `pico` | Saltos bruscos frente a la mediana de las 3 lecturas vecinas a cada lado (temperatura ±5 °C, humedades ±15 %) |
+| `duplicada` | Lecturas repetidas con la misma hora |
+
+Los limites estan en `limpieza/app/reglas.py`; ajustarlos cuando los sensores esten calibrados.
+En Postgres quedan las tablas `mediciones` (datos limpios), `descartes` (que se quito y por que)
+y `ejecuciones` (cada vuelta de la limpieza).
+
+Grafana arranca con la fuente de datos *Postgres (datos limpios)* y el tablero
+**Agricultura IoT · Datos limpios** ya creados (`grafana/provisioning` y `grafana/dashboards`):
+`http://<DNS-publico-EC2>:3000/d/agricultura-limpios`. Si se cambia el tablero desde Grafana,
+exportar el JSON y guardarlo en `grafana/dashboards/agricultura.json`.
+
+## Conectar Grafana a CrateDB (opcional)
 
 En Grafana: *Connections > Data sources > Add > PostgreSQL*
 

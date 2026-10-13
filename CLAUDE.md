@@ -5,7 +5,8 @@ desplegada con Docker Compose en una instancia EC2 Ubuntu.
 
 ## Arquitectura
 Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> QuantumLeap :8668
---> CrateDB :4200/:5432 (historico, tablas doc.et<tipo>) --> Grafana :3000
+--> CrateDB :4200/:5432 (historico crudo, tablas doc.et<tipo>) --> limpieza (cada 15 min)
+--> Postgres (datos limpios, sin puerto publico) --> Grafana :3000
 
 ## Archivos
 - `docker-compose.yml`: todos los servicios. Debe mantenerse identico al de la EC2.
@@ -22,6 +23,13 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
   historico de QuantumLeap (`QUANTUMLEAP_URL`, `/api/entidades/{id}/historico`, todos los atributos
   numericos). `GraficaLinea.jsx` es copia de la de la landing (solo cambia el import de `formatear`).
 
+- `limpieza/`: servicio FastAPI sin puerto publico (el gestor lo llama en http://limpieza:8000).
+  Lee CrateDB por `/_sql` (columnas en minusculas: humedadsuelo -> humedadSuelo), aplica
+  `app/reglas.py` y escribe en Postgres `mediciones` (promedio cada 5 min), `descartes`,
+  `ejecuciones` y `avance` (incremental, reprocesa el ultimo intervalo; idempotente).
+- `grafana/`: provisioning de la fuente Postgres (uid `postgres-limpios`) y del tablero
+  `agricultura-limpios` (JSON generado; colores validados con el skill dataviz para tema oscuro).
+- `.env` en la raiz (no se sube; plantilla `.env.example`): POSTGRES_* para postgres, limpieza y grafana.
 - `sensor-lilygo/`: firmware PlatformIO del nodo (antes `TXlora`, que transmitia por LoRa para un
   examen). Credenciales en `include/secretos.h` (no se sube, plantilla `secretos.example.h`).
   `src/LoRaBoards.*` y `utilities.h` son del ejemplo de LilyGO; solo se desactivo su softAP WiFi.
@@ -65,17 +73,18 @@ Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
   `ssh -i "../llavesIoT.pem" ubuntu@ec2-3-234-196-13.compute-1.amazonaws.com`
 - IP elastica 3.234.196.13 (desde 2026-10-13; antes la IP cambiaba en cada encendido). Liberarla
   (Actions > Release) al terminar el semestre: se cobra aunque la instancia este apagada.
-- La instancia se apaga sola entre sesiones; con `restart: unless-stopped` los 7 servicios vuelven solos.
+- La instancia se apaga sola entre sesiones; con `restart: unless-stopped` los 9 servicios vuelven solos.
+- Grafana de la EC2 seguia con admin/admin el 2026-10-13 (expuesto en :3000): cambiarlo.
 - Carpeta del proyecto en la EC2: `~/agricultura` (volumenes `agricultura_mongo-db`, `agricultura_crate-db`, `agricultura_grafana`).
 - Ubuntu x86_64, 7.6 GB RAM, Docker 29.1.3, Compose 2.40.3 (instalado con `apt install docker-compose`).
 - `vm.max_map_count` ya viene en 1048576.
-- Estado al 2026-10-13: 7 contenedores arriba (los 5 de FIWARE + `gestor` en :80 + `landing` en :443,
+- Estado al 2026-10-13: 9 contenedores arriba (5 de FIWARE + `gestor` :80 + `landing` :443 + `db-postgres` + `limpieza`,
   puertos abiertos en el Security Group; el 8000 ya no se usa).
 - El nodo escribe `sensor01` en Orion por UPBWiFi. Suscripcion Orion -> QuantumLeap creada el
   2026-10-13 (`6ace58aa4abd323b28ea3081`, tipo SensorAgricola, idPattern .*): CrateDB ya guarda historico.
 - El compose, `gestor/` y `landing/` de la EC2 son los del repo (subidos con tar por ssh, sin
   node_modules ni .env). Respaldos del compose: `~/agricultura/docker-compose.yml.bak-2026-10-08` y `.bak-2026-10-13`.
-- `gestor/.env` de la EC2 se genero alli con password aleatoria (permisos 600); verla con
+- El `.env` de la raiz (Postgres) y `gestor/.env` de la EC2 se generaron alli con password aleatoria (permisos 600); verla con
   `grep ADMIN_PASSWORD ~/agricultura/gestor/.env`.
 
 ### Instancia vieja (ya no se usa)

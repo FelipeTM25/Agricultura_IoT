@@ -1,0 +1,11 @@
+# Carga los tableros de la carpeta grafana/dashboards del repo (montada en /etc/grafana/dashboards).
+# Si se edita un tablero desde Grafana hay que exportar el JSON y guardarlo aqui, o se pierde.
+apiVersion: 1
+providers:
+  - name: agricultura
+    folder: Agricultura IoT
+    type: file
+    disableDeletion: true
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards

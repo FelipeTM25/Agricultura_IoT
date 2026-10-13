@@ -9,8 +9,11 @@
 #
 #   Sensor --HTTP--> Orion (estado actual) --suscripcion--> QuantumLeap
 #                      |                                        |
-#                    MongoDB                                 CrateDB --> Grafana
-#                                                           (historico)  (tableros)
+#                    MongoDB                                 CrateDB (historico crudo)
+#                                                               |
+#                                                           limpieza (cada 15 min o con boton)
+#                                                               |
+#                                                           Postgres (datos limpios) --> Grafana
 #
 # Puertos expuestos en la instancia:
 #   1026  Orion        API NGSI (v2 y NGSI-LD) para crear y actualizar entidades
@@ -21,6 +24,9 @@
 #   27017 MongoDB      base de datos de Orion
 #   80    Gestor       front y API para administrar Orion (requiere login)
 #   443   Landing      pagina publica con lecturas e historico (sin login, HTTP)
+# Postgres y limpieza no se publican: solo se usan dentro de la red de Docker.
+#
+# Credenciales de Postgres: archivo .env en esta carpeta (ver .env.example).
 #
 # Todos los servicios tienen restart: unless-stopped para que vuelvan a
 # arrancar solos cuando la instancia se apaga y se enciende.
@@ -112,8 +118,9 @@ services:
       - crate-db:/data
 
   # ---------------------------------------------------------------------------
-  # Grafana: tableros para visualizar el historico. Se conecta a CrateDB como
-  # fuente de datos PostgreSQL (host crate-db:5432).
+  # Grafana: tableros con los datos ya limpios de Postgres. La fuente de datos y
+  # el tablero "Agricultura IoT · Datos limpios" se crean solos desde ./grafana
+  # (provisioning). Tambien se puede agregar CrateDB a mano (host crate-db:5432).
   # ---------------------------------------------------------------------------
   grafana:
     image: grafana/grafana
@@ -121,14 +128,62 @@ services:
     restart: unless-stopped
     depends_on:
       - crate-db
+      - postgres
     ports:
       - "3000:3000"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-agricultura}
+      - POSTGRES_USER=${POSTGRES_USER:-agricultura}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (ver .env.example)}
     volumes:
       - grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+
+  # ---------------------------------------------------------------------------
+  # Postgres: base de datos con las lecturas ya limpias (promedios cada 5 min),
+  # lo descartado y el registro de cada limpieza. La lee Grafana.
+  # Sin puerto publicado: el 5432 del host ya lo usa CrateDB.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    hostname: postgres
+    container_name: db-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-agricultura}
+      - POSTGRES_USER=${POSTGRES_USER:-agricultura}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (ver .env.example)}
+    expose:
+      - "5432"
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+
+  # ---------------------------------------------------------------------------
+  # Limpieza: lee el historico crudo de CrateDB, descarta lecturas imposibles,
+  # picos y duplicados, y guarda los promedios en Postgres. Corre sola cada
+  # LIMPIEZA_INTERVALO_MIN minutos y tambien con el boton del gestor.
+  # ---------------------------------------------------------------------------
+  limpieza:
+    build: ./limpieza
+    container_name: limpieza
+    restart: unless-stopped
+    depends_on:
+      - crate-db
+      - postgres
+    environment:
+      - CRATE_URL=http://crate-db:4200
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-agricultura}
+      - POSTGRES_USER=${POSTGRES_USER:-agricultura}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (ver .env.example)}
+      - LIMPIEZA_INTERVALO_MIN=${LIMPIEZA_INTERVALO_MIN:-15}
+      - LIMPIEZA_INTERVALO_DATOS_MIN=${LIMPIEZA_INTERVALO_DATOS_MIN:-5}
 
   # ---------------------------------------------------------------------------
   # Gestor: API (FastAPI) + front (React) para administrar las entidades y
-  # suscripciones de Orion con usuario y contrasena, y ver su historico (QuantumLeap). Se construye desde
+  # suscripciones de Orion con usuario y contrasena, ver su historico (QuantumLeap),
+  # exportarlo y lanzar la limpieza de datos. Se construye desde
   # ./gestor y lee las credenciales de gestor/.env (ver gestor/.env.example).
   # Docs de la API en http://<host>/docs
   # ---------------------------------------------------------------------------
@@ -145,6 +200,7 @@ services:
     environment:
       - ORION_URL=http://orion:1026
       - QUANTUMLEAP_URL=http://quantumleap:8668
+      - LIMPIEZA_URL=http://limpieza:8000
     env_file:
       - ./gestor/.env
     restart: unless-stopped
@@ -182,3 +238,4 @@ volumes:
   mongo-db: ~
   crate-db: ~
   grafana: ~
+  postgres-db: ~
