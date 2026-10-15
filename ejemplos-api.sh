@@ -4,7 +4,8 @@
 #
 # Uso:  ./ejemplos-api.sh [host]
 #   host por defecto: localhost (ejecutando dentro de la EC2).
-#   Desde otro equipo, pasar el DNS publico de la EC2.
+#   Orion solo escucha en 127.0.0.1 de la instancia: desde otro equipo hay que abrir
+#   antes un tunel  ssh -i llave.pem -L 1026:localhost:1026 ubuntu@<host>  y usar localhost.
 
 HOST="${1:-localhost}"
 ORION="http://$HOST:1026"

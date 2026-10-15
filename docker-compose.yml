@@ -7,7 +7,7 @@
 #
 # Flujo de los datos:
 #
-#   Sensor --HTTP--> Orion (estado actual) --suscripcion--> QuantumLeap
+#   Sensor --HTTP+clave--> Gestor --> Orion (estado actual) --suscripcion--> QuantumLeap
 #                      |                                        |
 #                    MongoDB                                 CrateDB (historico crudo)
 #                                                               |
@@ -16,14 +16,19 @@
 #                                                           Postgres (datos limpios) --> Grafana
 #
 # Puertos expuestos en la instancia:
-#   1026  Orion        API NGSI (v2 y NGSI-LD) para crear y actualizar entidades
-#   8668  QuantumLeap  API para consultar series de tiempo
-#   3000  Grafana      tableros de visualizacion
-#   4200  CrateDB      consola web / API SQL
-#   5432  CrateDB      protocolo PostgreSQL (lo usa Grafana)
-#   27017 MongoDB      base de datos de Orion
-#   80    Gestor       front y API para administrar Orion (requiere login)
+#   80    Gestor       front y API para administrar Orion (requiere login) y entrada de
+#                      lecturas de los sensores (requiere la clave de cada dispositivo)
 #   443   Landing      pagina publica con lecturas e historico (sin login, HTTP)
+#   3000  Grafana      tableros de visualizacion
+#
+# Solo en la propia instancia (127.0.0.1), porque no tienen autenticacion: nadie de
+# afuera puede escribir ni borrar datos. Desde tu equipo se usan con un tunel SSH, ej.
+#   ssh -i llave.pem -L 4200:localhost:4200 ubuntu@<host>   y abrir http://localhost:4200
+#   1026  Orion        API NGSI (v2 y NGSI-LD)
+#   8668  QuantumLeap  API de series de tiempo
+#   4200  CrateDB      consola web / API SQL   (4300 transporte interno)
+#   5432  CrateDB      protocolo PostgreSQL
+#   27017 MongoDB      base de datos de Orion
 # Postgres y limpieza no se publican: solo se usan dentro de la red de Docker.
 #
 # Credenciales de Postgres: archivo .env en esta carpeta (ver .env.example).
@@ -53,7 +58,7 @@ services:
     expose:
       - "1026"
     ports:
-      - "1026:1026" # localhost:1026
+      - "127.0.0.1:1026:1026" # solo desde la instancia; los sensores entran por el gestor
     command: -dbhost mongo-db -logLevel DEBUG
     healthcheck:
       test: ["CMD-SHELL", "curl --fail -s http://localhost:1026/version || exit 1"]
@@ -72,7 +77,7 @@ services:
     container_name: fiware-quantumleap
     restart: unless-stopped
     ports:
-      - "8668:8668"
+      - "127.0.0.1:8668:8668"
     depends_on:
       - crate-db
     environment:
@@ -92,7 +97,7 @@ services:
     expose:
       - "27017"
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     networks:
       - default
     volumes:
@@ -108,9 +113,9 @@ services:
     container_name: db-crate
     restart: unless-stopped
     ports:
-      - "4200:4200"
-      - "4300:4300"
-      - "5432:5432"
+      - "127.0.0.1:4200:4200"
+      - "127.0.0.1:4300:4300"
+      - "127.0.0.1:5432:5432"
     command: crate -Cauth.host_based.enabled=false  -Ccluster.name=democluster -Chttp.cors.enabled=true -Chttp.cors.allow-origin="*"
     environment:
       - CRATE_HEAP_SIZE=4g

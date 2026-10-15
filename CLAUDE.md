@@ -4,7 +4,7 @@ Proyecto final de la materia IoT (UPB). Plataforma FIWARE para monitoreo agricol
 desplegada con Docker Compose en una instancia EC2 Ubuntu.
 
 ## Arquitectura
-Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> QuantumLeap :8668
+Sensor --HTTP + X-Api-Key--> Gestor :80 (/api/dispositivos) --red interna--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> QuantumLeap :8668
 --> CrateDB :4200/:5432 (historico crudo, tablas doc.et<tipo>) --> limpieza (cada 15 min)
 --> Postgres (datos limpios, sin puerto publico) --> Grafana :3000
 
@@ -22,6 +22,10 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
   plantilla en `gestor/.env.example`). La API habla con Orion por NGSI-v2 (`ORION_URL`) y lee el
   historico de QuantumLeap (`QUANTUMLEAP_URL`, `/api/entidades/{id}/historico`, todos los atributos
   numericos). `GraficaLinea.jsx` es copia de la de la landing (solo cambia el import de `formatear`).
+  Entrada de los sensores en `api/dispositivos.py`: `POST /api/dispositivos/{id}/lecturas` y
+  `GET .../ping`, clave por dispositivo en `DISPOSITIVOS=id:clave,...` de gestor/.env (no es el login
+  del admin; solo escribe su propia entidad). JSON simple {"var": num, "ubicacion": {lat, lon}} que el
+  gestor convierte a NGSI y manda con append a Orion (tipo `TIPO_DISPOSITIVO`, SensorAgricola).
 
 - `limpieza/`: servicio FastAPI sin puerto publico (el gestor lo llama en http://limpieza:8000).
   Lee CrateDB por `/_sql` (columnas en minusculas: humedadsuelo -> humedadSuelo), aplica
@@ -36,8 +40,9 @@ Sensor --HTTP--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> Quantu
 
 ## Modelo del sensor
 LilyGO T-Beam v1.2 (ESP32, PMU AXP2101 detectada sola, GPS en Serial1 34/12, sin OLED). Cada `PERIODO_TX_MS` (30 s) promedia 20
-muestras y hace `POST /v2/op/update` con `actionType: append` a Orion :1026 (crea la entidad si no
-existe; las variables sin lectura valida no se mandan). Entidad `sensor01`, tipo `SensorAgricola`:
+muestras y las envia; el gestor hace `POST /v2/op/update` con `actionType: append` en Orion (crea la entidad si no
+existe; las variables sin lectura valida no se mandan). Desde 2026-10-15 ya no va directo a Orion:
+manda el JSON simple al gestor (`GESTOR_HOST`:80, `DISPOSITIVO_CLAVE` en secretos.h). Entidad `sensor01`, tipo `SensorAgricola`:
 - `temperatura` (°C) y `humedad` (% aire): HDC1080, I2C 0x40.
 - `luz` (lux) y `radiacion` (cuentas IR 0..1023, indicador relativo, no W/m2): CJMCU-3216 = AP3216C,
   I2C 0x1E, driver propio en `src/Ap3216.h`. Satura en ~20661 lux (sol directo).
@@ -46,13 +51,16 @@ existe; las variables sin lectura valida no se mandan). Entidad `sensor01`, tipo
 - `ubicacion` (geo:json Point [lon, lat]): GPS, solo se manda con fix.
 Ambos sensores I2C van al bus de la placa (SDA 21 / SCL 22, 3V3, GND), compartido con PMU 0x34 y OLED 0x3C.
 Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
-- WiFi: UPBWiFi (abierta, 2.4 GHz canal 1, sin portal cautivo, deja salir al 1026) funciona; en
-  `secretos.h` va `WIFI_PASSWORD ""`. Al arrancar el firmware lista las redes y prueba `/version` de Orion.
+- WiFi: UPBWiFi (abierta, 2.4 GHz canal 1, sin portal cautivo) funciona; en `secretos.h` va
+  `WIFI_PASSWORD ""`. Al arrancar el firmware lista las redes y prueba `/api/dispositivos/sensor01/ping` del gestor.
 - `waiting for download` / `boot:0x2` al arrancar = un cable deja en bajo un pin de arranque (0, 2, 12,
   15). Paso el 2026-10-13 con el adaptador del sensor de suelo conectado; sin el, arranca bien.
 - Si PlatformIO falla con `No module named 'intelhex'`: `~/.platformio/penv/Scripts/python -m pip install intelhex`.
 
 ## Decisiones y gotchas ya resueltos
+- Seguridad: Orion, QuantumLeap, MongoDB y CrateDB se publican solo en 127.0.0.1 (no tienen
+  autenticacion; QuantumLeap acepta escrituras en /v2/notify). Desde fuera: tunel SSH. Lo publico es
+  gestor :80, landing :443 y grafana :3000. La clave del dispositivo viaja en HTTP plano (no hay TLS).
 - MongoDB debe ser >= 4.2 (se usa `mongo:4.4`). Con `mongo:3.6` Orion-LD se cae:
   `reports wire version 6, but this version of libmongoc requires at least 8`.
   Si un volumen fue creado con Mongo viejo, Mongo nuevo no lo abre: hay que usar un volumen limpio.
@@ -83,7 +91,8 @@ Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
 - El nodo escribe `sensor01` en Orion por UPBWiFi. Suscripcion Orion -> QuantumLeap creada el
   2026-10-13 (`6ace58aa4abd323b28ea3081`, tipo SensorAgricola, idPattern .*): CrateDB ya guarda historico.
 - El compose, `gestor/` y `landing/` de la EC2 son los del repo (subidos con tar por ssh, sin
-  node_modules ni .env). Respaldos del compose: `~/agricultura/docker-compose.yml.bak-2026-10-08` y `.bak-2026-10-13`.
+  node_modules ni .env). Respaldos del compose: `~/agricultura/docker-compose.yml.bak-2026-10-08`, `.bak-2026-10-13`, `.bak-2026-10-15`.
+- `gestor/.env` de la EC2 tiene `DISPOSITIVOS=sensor01:<clave>` con la misma clave que el `secretos.h` local.
 - El `.env` de la raiz (Postgres) y `gestor/.env` de la EC2 se generaron alli con password aleatoria (permisos 600); verla con
   `grep ADMIN_PASSWORD ~/agricultura/gestor/.env`.
 

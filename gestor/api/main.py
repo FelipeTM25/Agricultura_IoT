@@ -1,4 +1,5 @@
-"""API del gestor de Orion: login del administrador, entidades, suscripciones, historico y limpieza.
+"""API del gestor de Orion: login del administrador, entidades, suscripciones, historico, limpieza
+y entrada de lecturas de los dispositivos (que ya no escriben directo en Orion).
 
 Todas las rutas viven bajo /api. La documentacion interactiva queda en /docs.
 Si existe la carpeta static/ (el front de React ya compilado), se sirve en /.
@@ -11,9 +12,12 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, historico, orion
+from . import auth, config, dispositivos, historico, orion
 from .modelos import Atributo, Credenciales, EntidadNueva, NombreAtributo, SuscripcionNueva
 
 LIMITE = 1000  # maximo que Orion devuelve por pagina
@@ -27,6 +31,16 @@ async def ciclo_de_vida(app: FastAPI):
 
 
 app = FastAPI(title="Gestor Orion - Agricultura IoT", version="0.1.0", lifespan=ciclo_de_vida)
+
+
+
+@app.exception_handler(RequestValidationError)
+async def error_de_validacion(request, exc: RequestValidationError):
+    """Errores 422 sin repetir el valor recibido: si venia un NaN, no se puede devolver
+    como JSON y la respuesta terminaba en error 500."""
+    detalle = [{k: v for k, v in e.items() if k not in ("input", "ctx")} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(detalle)})
+
 
 publica = APIRouter(prefix="/api")
 protegida = APIRouter(prefix="/api", dependencies=[Depends(auth.usuario_actual)])
@@ -206,6 +220,7 @@ async def ejecutar_limpieza():
 
 
 app.include_router(publica)
+app.include_router(dispositivos.router)
 app.include_router(protegida)
 
 # El front compilado se monta al final para que no tape las rutas de la API ni /docs

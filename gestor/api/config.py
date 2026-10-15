@@ -22,3 +22,19 @@ ADMIN_PASSWORD = _obligatoria("ADMIN_PASSWORD")
 # Clave para firmar los tokens de sesion. Si cambia, todas las sesiones se cierran.
 JWT_SECRET = _obligatoria("JWT_SECRET")
 TOKEN_HORAS = int(os.getenv("TOKEN_HORAS", "8"))
+
+
+def _dispositivos(texto: str) -> dict[str, str]:
+    """'sensor01:clave1,sensor02:clave2' -> {'sensor01': 'clave1', 'sensor02': 'clave2'}"""
+    claves = {}
+    for par in texto.split(","):
+        dispositivo, _, clave = par.strip().partition(":")
+        if dispositivo and clave:
+            claves[dispositivo.strip()] = clave.strip()
+    return claves
+
+
+# Dispositivos (nodos sensores) autorizados a enviar lecturas, cada uno con su propia clave.
+# Es distinta del login del admin: con ella solo se pueden escribir lecturas de ese dispositivo.
+DISPOSITIVOS = _dispositivos(os.getenv("DISPOSITIVOS", ""))
+TIPO_DISPOSITIVO = os.getenv("TIPO_DISPOSITIVO", "SensorAgricola")

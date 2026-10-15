@@ -7,7 +7,7 @@ Compose en una instancia EC2 de AWS con Ubuntu.
 ## Arquitectura
 
 ```
-Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
+Sensor --HTTP+clave--> Gestor --> Orion-LD (estado actual) --suscripcion--> QuantumLeap
                     |                                          |
                  MongoDB                                    CrateDB (historico crudo)
                                                                |
@@ -18,14 +18,14 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
 
 | Servicio    | Imagen                        | Puerto | Funcion                                         |
 |-------------|-------------------------------|--------|-------------------------------------------------|
-| Orion-LD    | `fiware/orion-ld`             | 1026   | Context Broker: estado actual de cada sensor    |
+| Orion-LD    | `fiware/orion-ld`             | 1026*  | Context Broker: estado actual de cada sensor    |
 | MongoDB     | `mongo:4.4`                   | 27017  | Base de datos de Orion                          |
-| QuantumLeap | `orchestracities/quantumleap` | 8668   | Convierte las notificaciones en series de tiempo |
+| QuantumLeap | `orchestracities/quantumleap` | 8668*  | Convierte las notificaciones en series de tiempo |
 | CrateDB     | `crate`                       | 4200, 5432 | Almacena el historico                       |
 | Grafana     | `grafana/grafana`             | 3000   | Tableros (desde Postgres, ya provisionados)     |
 | Postgres    | `postgres:16-alpine`          | -      | Datos limpios (promedios cada 5 min)            |
 | Limpieza    | se construye desde `limpieza/`| -      | CrateDB -> reglas de limpieza -> Postgres       |
-| Gestor      | se construye desde `gestor/`  | 80     | Front y API para administrar Orion con login    |
+| Gestor      | se construye desde `gestor/`  | 80     | Administracion con login y entrada de lecturas de los sensores |
 | Landing     | se construye desde `landing/` | 443    | Pagina publica con lecturas e historico         |
 
 ## Contenido del repositorio
@@ -53,13 +53,15 @@ Sensor --HTTP--> Orion-LD (estado actual) --suscripcion--> QuantumLeap
   | Puerto | Uso                                   |
   |--------|---------------------------------------|
   | 22     | SSH (idealmente solo desde tu IP)     |
-  | 1026   | Orion, para que los sensores envien datos |
   | 3000   | Grafana                               |
-  | 8668   | QuantumLeap (opcional, consultas del historico) |
   | 80     | Gestor de Orion                       |
   | 443    | Landing publica                       |
 
-  No abrir `27017`, `4200` ni `5432`: MongoDB y CrateDB no tienen autenticacion.
+  No abrir `1026`, `8668`, `27017`, `4200` ni `5432`: Orion, QuantumLeap, MongoDB y CrateDB no
+  tienen autenticacion. Ademas el compose los publica solo en `127.0.0.1` (marcados con * en la
+  tabla de servicios), asi que aunque el puerto quede abierto no se alcanzan desde afuera. Los
+  sensores escriben por el gestor (puerto 80) con su clave. Para usarlos desde tu equipo, un tunel:
+  `ssh -i <llave>.pem -L 4200:localhost:4200 ubuntu@<DNS-publico-EC2>` y abrir `http://localhost:4200`.
 
 ### 2. Conectarse por SSH
 
@@ -138,8 +140,7 @@ Grafana queda en `http://<DNS-publico-EC2>:3000` (usuario y contrasena inicial: 
 
 ```bash
 chmod +x ejemplos-api.sh
-./ejemplos-api.sh                       # dentro de la EC2
-./ejemplos-api.sh <DNS-publico-EC2>     # desde otro equipo
+./ejemplos-api.sh                       # dentro de la EC2 (Orion solo escucha en 127.0.0.1)
 ```
 
 El script crea la entidad `sensor01`, suscribe QuantumLeap, actualiza la
@@ -221,13 +222,21 @@ entidad `sensor01` (tipo `SensorAgricola`) por WiFi.
 Pasos:
 
 1. Copiar `sensor-lilygo/include/secretos.example.h` como `secretos.h` y poner la red
-   WiFi (2.4 GHz) y el host de Orion.
+   WiFi (2.4 GHz), el host del gestor y la clave del dispositivo (`DISPOSITIVO_CLAVE`). La
+   misma clave va en `gestor/.env` de la EC2: `DISPOSITIVOS=sensor01:<clave>`.
 2. Abrir `sensor-lilygo/` en VS Code con PlatformIO y usar *Upload and Monitor*.
 3. Calibrar la humedad de suelo: anotar el valor `crudo` que imprime el monitor con el
    sensor al aire y dentro de agua, y ponerlos en `SUELO_SECO_RAW` / `SUELO_MOJADO_RAW`
    (`src/main.cpp`).
 
-El puerto 1026 de Orion debe estar abierto en el Security Group para que el nodo llegue.
+El nodo no escribe directo en Orion: manda `POST /api/dispositivos/sensor01/lecturas` al
+gestor (puerto 80) con la cabecera `X-Api-Key`. El gestor comprueba la clave (cada dispositivo
+tiene la suya y solo puede escribir su propia entidad), valida los valores y los guarda en Orion.
+Ejemplo:
+
+```bash
+curl -X POST http://<DNS-publico-EC2>/api/dispositivos/sensor01/lecturas   -H 'X-Api-Key: <clave>' -H 'Content-Type: application/json'   -d '{"temperatura": 23.4, "humedad": 61.2, "ubicacion": {"lat": 6.2425, "lon": -75.5895}}'
+```
 
 ## Limpieza de datos y Grafana
 
