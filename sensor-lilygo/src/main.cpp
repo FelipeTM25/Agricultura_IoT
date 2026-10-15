@@ -1,11 +1,11 @@
 // Nodo sensor de Agricultura IoT: LilyGO T-Beam (ESP32) que mide el cultivo y
-// publica las lecturas en Orion por WiFi.
+// manda las lecturas por WiFi al gestor, que las valida y las guarda en Orion.
 //
 //   - HDC1080   temperatura y humedad del aire      I2C de la placa (SDA 21 / SCL 22)
 //   - CJMCU-3216 (AP3216C) luz (lux) e infrarrojo   I2C de la placa (SDA 21 / SCL 22)
 //   - Sensor capacitivo de humedad del suelo        analogico en HUMEDAD_SUELO_PIN
 //   - GPS de la placa en SerialGPS (= Serial1, GPIO34 RX / GPIO12 TX)
-//   - WiFi -> HTTP POST a Orion (NGSI-v2), entidad SensorAgricola
+//   - WiFi -> HTTP POST al gestor con la clave del dispositivo -> Orion
 //
 // El bus I2C de la placa lo comparten los dos sensores con el PMU AXP192 (0x34)
 // y el OLED (0x3C); no hay choque de direcciones (HDC1080 0x40, AP3216 0x1E).
@@ -22,7 +22,7 @@
 #if __has_include("secretos.h")
 #include "secretos.h"
 #else
-#error "Falta include/secretos.h: copia include/secretos.example.h y pon tu WiFi y el host de Orion"
+#error "Falta include/secretos.h: copia include/secretos.example.h y pon tu WiFi, el host del gestor y la clave del dispositivo"
 #endif
 
 // Pon TRAZA_ESTADOS en 1 para ver cada transicion de la maquina de estados.
@@ -31,20 +31,26 @@
 #define TRAZA_ESTADOS               0
 
 // ---------------------------------------------------------------------------
-// Entidad en Orion
+// Envio al gestor
 // ---------------------------------------------------------------------------
-// Cada ciclo se hace un "append" en /v2/op/update: crea la entidad si no existe
-// y si ya existe actualiza sus atributos. Las variables sin lectura valida en el
-// ciclo no se mandan, para no pisar el ultimo valor bueno con basura.
+// Orion no se publica a internet (no tiene autenticacion). Cada ciclo el nodo
+// manda sus lecturas al gestor con su clave (cabecera X-Api-Key):
 //
-//   temperatura   Number  °C              (HDC1080)
-//   humedad       Number  % aire          (HDC1080)
-//   humedadSuelo  Number  % suelo         (sensor capacitivo, calibrado abajo)
-//   luz           Number  lux             (AP3216)
-//   radiacion     Number  cuentas IR 0..1023, indicador relativo (AP3216)
-//   ubicacion     geo:json Point [lon, lat] (GPS, solo si hay fix)
+//   POST http://GESTOR_HOST/api/dispositivos/sensor01/lecturas
+//   {"temperatura":23.40,"humedad":61.20,...,"ubicacion":{"lat":6.242500,"lon":-75.589500}}
+//
+// El gestor comprueba la clave, valida los valores y hace el "append" en Orion
+// (crea la entidad sensor01 de tipo SensorAgricola si no existe). Las variables
+// sin lectura valida en el ciclo no se mandan, para no pisar el ultimo valor
+// bueno con basura.
+//
+//   temperatura   °C              (HDC1080)
+//   humedad       % aire          (HDC1080)
+//   humedadSuelo  % suelo         (sensor capacitivo, calibrado abajo)
+//   luz           lux             (AP3216)
+//   radiacion     cuentas IR 0..1023, indicador relativo (AP3216)
+//   ubicacion     lat / lon       (GPS, solo si hay fix)
 #define ENTIDAD_ID                  "sensor01"
-#define ENTIDAD_TIPO                "SensorAgricola"
 
 // Periodo entre envios, contado desde el inicio de cada ciclo. El muestreo y el
 // envio caben dentro de esta ventana; DORMIR absorbe el resto para que el
@@ -152,6 +158,7 @@ uint8_t fallosAp = 0;
 uint16_t ultimoCrudoSuelo = 0;
 
 char payload[640];
+bool hayDatos = false;
 int ultimoCodigoHttp = 0;
 
 ClosedCube_HDC1080 hdc1080;
@@ -313,37 +320,44 @@ static void escanearRedes() {
   WiFi.scanDelete();
 }
 
-// Comprueba que desde esta red se llega a Orion. Distingue los tres problemas tipicos
-// de una red de universidad: DNS, portal cautivo (pide login en una pagina) y puerto
-// bloqueado.
-static void probarOrion() {
-  campo("Orion");
+// Comprueba que desde esta red se llega al gestor y que acepta la clave del
+// dispositivo. Distingue los problemas tipicos: DNS, portal cautivo (la red pide
+// login en una pagina), puerto bloqueado y clave incorrecta.
+static void probarGestor() {
+  campo("Gestor");
   IPAddress ip;
-  if (!WiFi.hostByName(ORION_HOST, ip)) {
-    Serial.printf("no se pudo resolver %s (DNS de la red)\n", ORION_HOST);
+  if (!WiFi.hostByName(GESTOR_HOST, ip)) {
+    Serial.printf("no se pudo resolver %s (DNS de la red)\n", GESTOR_HOST);
     return;
   }
 
   HTTPClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-  http.begin(String("http://") + ORION_HOST + ":" + ORION_PUERTO + "/version");
+  http.begin(String("http://") + GESTOR_HOST + ":" + GESTOR_PUERTO + "/api/dispositivos/" ENTIDAD_ID "/ping");
+  http.addHeader("X-Api-Key", DISPOSITIVO_CLAVE);
   int codigo = http.GET();
   String cuerpo = codigo > 0 ? http.getString() : "";
   http.end();
 
-  if (codigo == 200 && cuerpo.indexOf("orion") >= 0) {
-    Serial.printf("OK    %s (%s) responde\n", ORION_HOST, ip.toString().c_str());
+  if (codigo == 200 && cuerpo.indexOf("\"orion\":true") >= 0) {
+    Serial.printf("OK    %s (%s) acepta la clave y llega a Orion\n", GESTOR_HOST, ip.toString().c_str());
+  }
+  else if (codigo == 200) {
+    Serial.println("acepta la clave, pero el gestor no llega a Orion (revisar el servidor)");
+  }
+  else if (codigo == 401) {
+    Serial.println("clave rechazada: DISPOSITIVO_CLAVE no coincide con DISPOSITIVOS en gestor/.env");
   }
   else if (codigo >= 300 && codigo < 400) {
     Serial.printf("redirige (HTTP %d): la red tiene portal cautivo y pide iniciar sesion\n", codigo);
   }
   else if (codigo > 0) {
-    Serial.printf("HTTP %d pero no es Orion: probable portal cautivo de la red\n", codigo);
+    Serial.printf("HTTP %d inesperado: probable portal cautivo de la red\n", codigo);
   }
   else {
     Serial.printf("sin respuesta de %s:%d (%s): la red bloquea el puerto o no hay salida a internet\n",
-                  ip.toString().c_str(), ORION_PUERTO, http.errorToString(codigo).c_str());
+                  ip.toString().c_str(), GESTOR_PUERTO, http.errorToString(codigo).c_str());
   }
 }
 
@@ -522,34 +536,35 @@ void pruning() {
   estado = BUNDLING;
 }
 
-// Construye el cuerpo del POST /v2/op/update para Orion
-static void construirPayload() {
-  size_t n = snprintf(payload, sizeof(payload),
-                      "{\"actionType\":\"append\",\"entities\":[{\"id\":\"" ENTIDAD_ID "\",\"type\":\"" ENTIDAD_TIPO "\"");
+// Construye el JSON de lecturas para el gestor. Devuelve false si no hay nada
+// valido que mandar en este ciclo.
+static bool construirPayload() {
+  size_t n = snprintf(payload, sizeof(payload), "{");
+  bool hayDatos = false;
 
   for (uint8_t k = 0; k < NUM_VARIABLES && n < sizeof(payload); k++) {
     const Resumen &r = bundleActual.variable[k];
     if (r.valido) {
-      n += snprintf(payload + n, sizeof(payload) - n,
-                    ",\"%s\":{\"type\":\"Number\",\"value\":%.2f}", NOMBRE_VARIABLE[k], r.promedio);
+      n += snprintf(payload + n, sizeof(payload) - n, "%s\"%s\":%.2f", hayDatos ? "," : "", NOMBRE_VARIABLE[k], r.promedio);
+      hayDatos = true;
     }
   }
 
   if (bundleActual.gpsValido && n < sizeof(payload)) {
-    // GeoJSON pone primero la longitud
-    n += snprintf(payload + n, sizeof(payload) - n,
-                  ",\"ubicacion\":{\"type\":\"geo:json\",\"value\":{\"type\":\"Point\",\"coordinates\":[%.6f,%.6f]}}",
-                  bundleActual.longitud, bundleActual.latitud);
+    n += snprintf(payload + n, sizeof(payload) - n, "%s\"ubicacion\":{\"lat\":%.6f,\"lon\":%.6f}",
+                  hayDatos ? "," : "", bundleActual.latitud, bundleActual.longitud);
+    hayDatos = true;
   }
 
   if (n < sizeof(payload)) {
-    n += snprintf(payload + n, sizeof(payload) - n, "}]}");
+    n += snprintf(payload + n, sizeof(payload) - n, "}");
   }
 
   if (n >= sizeof(payload)) {
     sangria();
     Serial.println("^ ADVERTENCIA: el payload se trunco, hay que agrandar payload[]");
   }
+  return hayDatos;
 }
 
 // Empaqueta el resultado de pruning + la posicion GPS actual en un bundle
@@ -578,7 +593,7 @@ void bundling() {
     pistaGPS();
   }
 
-  construirPayload();
+  hayDatos = construirPayload();
 
   estado = TRANSMITIR;
 }
@@ -595,10 +610,10 @@ static void refrescarPlaca() {
       snprintf(buf, sizeof(buf), "WiFi: sin conexion");
     }
     else if (ultimoCodigoHttp == 204) {
-      snprintf(buf, sizeof(buf), "Orion: OK  #%lu", (unsigned long)contadorEnvios);
+      snprintf(buf, sizeof(buf), "Gestor: OK  #%lu", (unsigned long)contadorEnvios);
     }
     else {
-      snprintf(buf, sizeof(buf), "Orion: error %d", ultimoCodigoHttp);
+      snprintf(buf, sizeof(buf), "Gestor: error %d", ultimoCodigoHttp);
     }
     u8g2->drawStr(0, 10, buf);
 
@@ -624,7 +639,7 @@ static void refrescarPlaca() {
   loopPMU(); // atiende las interrupciones del AXP192 (boton, USB, bateria)
 }
 
-// Envia el bundle a Orion por HTTP
+// Envia el bundle al gestor por HTTP; el gestor lo valida y lo guarda en Orion
 void transmitir() {
   campo("WiFi");
   wl_status_t s = WiFi.status();
@@ -632,22 +647,30 @@ void transmitir() {
     Serial.printf("%s, se reintenta en el proximo ciclo\n", textoEstadoWifi(s));
     ultimoCodigoHttp = 0;
   }
+  else if (!hayDatos) {
+    Serial.println("conectado, pero ningun sensor dio una lectura valida: no se envia nada");
+    ultimoCodigoHttp = 0;
+  }
   else {
     Serial.printf("%s   %s   %d dBm\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
     HTTPClient http;
     http.setTimeout(HTTP_TIMEOUT_MS);
-    http.begin(String("http://") + ORION_HOST + ":" + ORION_PUERTO + "/v2/op/update");
+    http.begin(String("http://") + GESTOR_HOST + ":" + GESTOR_PUERTO + "/api/dispositivos/" ENTIDAD_ID "/lecturas");
     http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Api-Key", DISPOSITIVO_CLAVE);
     ultimoCodigoHttp = http.POST((uint8_t *)payload, strlen(payload));
 
-    campo("Orion");
+    campo("Gestor");
     if (ultimoCodigoHttp == 204) {
-      Serial.printf("OK   %u B\n", (unsigned)strlen(payload));
+      Serial.printf("OK   %u B   (guardado en Orion)\n", (unsigned)strlen(payload));
       contadorEnvios++;
     }
+    else if (ultimoCodigoHttp == 401) {
+      Serial.println("clave rechazada: revisa DISPOSITIVO_CLAVE en secretos.h");
+    }
     else if (ultimoCodigoHttp > 0) {
-      // Orion explica el error en el cuerpo: {"error":"...","description":"..."}
+      // El gestor explica el error en el cuerpo: {"detail": "..."}
       Serial.printf("HTTP %d   %s\n", ultimoCodigoHttp, http.getString().c_str());
     }
     else {
@@ -670,7 +693,7 @@ void transmitir() {
 
 // Absorbe lo que falte para completar PERIODO_TX_MS desde el inicio del ciclo.
 // Asi el intervalo entre envios es estable aunque el muestreo o la respuesta
-// de Orion varien de un ciclo a otro.
+// del gestor varien de un ciclo a otro.
 void dormir() {
   uint32_t transcurrido = millis() - inicioCiclo;
   uint32_t restante = (transcurrido < PERIODO_TX_MS) ? (PERIODO_TX_MS - transcurrido) : 0;
@@ -705,7 +728,7 @@ void setup() {
 
   Serial.println();
   regla('=');
-  Serial.println("  Agricultura IoT  |  T-Beam -> WiFi -> Orion");
+  Serial.println("  Agricultura IoT  |  T-Beam -> WiFi -> Gestor -> Orion");
   regla('=');
 
   campo("HDC1080");
@@ -743,9 +766,9 @@ void setup() {
   }
 
   campo("Destino");
-  Serial.printf("http://%s:%d   entidad %s (%s)\n", ORION_HOST, ORION_PUERTO, ENTIDAD_ID, ENTIDAD_TIPO);
+  Serial.printf("http://%s:%d/api/dispositivos/%s/lecturas\n", GESTOR_HOST, GESTOR_PUERTO, ENTIDAD_ID);
   if (WiFi.status() == WL_CONNECTED) {
-    probarOrion();
+    probarGestor();
   }
 
   estado = SALUDO;

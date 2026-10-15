@@ -6,6 +6,9 @@
 #define WIFI_SSID       "mi-red"
 #define WIFI_PASSWORD   "mi-clave"   // red abierta (sin clave): dejar ""
 
-// Orion en la EC2. Solo el host, sin http:// ni puerto.
-#define ORION_HOST      "ec2-3-234-196-13.compute-1.amazonaws.com"
-#define ORION_PUERTO    1026
+// Gestor en la EC2 (recibe las lecturas y las guarda en Orion). Solo el host, sin http://
+#define GESTOR_HOST        "ec2-3-234-196-13.compute-1.amazonaws.com"
+#define GESTOR_PUERTO      80
+
+// Clave de este dispositivo: la misma que tiene sensor01 en DISPOSITIVOS de gestor/.env
+#define DISPOSITIVO_CLAVE  "cambia-esta-clave"
