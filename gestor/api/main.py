@@ -273,7 +273,20 @@ app.include_router(publica)
 app.include_router(dispositivos.router)
 app.include_router(protegida)
 
+
+class Front(StaticFiles):
+    """Archivos del front. El index.html se revalida siempre: si el navegador lo guarda, sigue
+    pidiendo el JS viejo despues de un despliegue. Los de assets/ llevan un hash en el nombre
+    (cambia en cada build), asi que esos si se pueden guardar."""
+
+    async def get_response(self, path, scope):
+        respuesta = await super().get_response(path, scope)
+        if not path.replace("\\", "/").startswith("assets/"):  # en Windows llega con \
+            respuesta.headers["Cache-Control"] = "no-cache"
+        return respuesta
+
+
 # El front compilado se monta al final para que no tape las rutas de la API ni /docs
 CARPETA_FRONT = Path(__file__).resolve().parent.parent / "static"
 if CARPETA_FRONT.is_dir():
-    app.mount("/", StaticFiles(directory=CARPETA_FRONT, html=True), name="front")
+    app.mount("/", Front(directory=CARPETA_FRONT, html=True), name="front")
