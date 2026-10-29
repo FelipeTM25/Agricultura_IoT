@@ -12,24 +12,29 @@ const PASOS = [
     texto: 'El Context Broker de FIWARE guarda el estado actual de cada sensor y avisa cada vez que una lectura cambia.',
   },
   {
-    icono: 'campana',
-    titulo: 'QuantumLeap',
-    texto: 'Recibe los avisos de Orion y convierte cada lectura en un punto de una serie de tiempo.',
+    icono: 'base',
+    titulo: 'QuantumLeap y CrateDB',
+    texto: 'Reciben los avisos de Orion y guardan cada lectura, tal como llega, en una base de series de tiempo.',
   },
   {
-    icono: 'base',
-    titulo: 'CrateDB',
-    texto: 'Base de datos de series de tiempo donde queda todo el histórico del cultivo.',
+    icono: 'filtro',
+    titulo: 'Limpieza',
+    texto: 'Cada 15 minutos descarta lecturas imposibles, picos y duplicados, y guarda los promedios limpios en Postgres.',
+  },
+  {
+    icono: 'alerta',
+    titulo: 'Alertas',
+    texto: 'Compara cada lectura con umbrales del cultivo y, si se cruzan, avisa por correo con la acción recomendada.',
   },
   {
     icono: 'grafica',
     titulo: 'Visualización',
-    texto: 'Esta página y los tableros de Grafana leen el estado actual y el histórico para mostrarlos.',
+    texto: 'Esta página y los tableros de Grafana muestran el estado actual y el histórico ya limpio.',
   },
 ]
 
 export default function ComoFunciona({ estado }) {
-  const servicio = { 'Orion-LD': estado?.orion, QuantumLeap: estado?.quantumleap }
+  const servicio = { 'Orion-LD': estado?.orion, Limpieza: estado?.limpieza, Alertas: estado?.alertas }
 
   return (
     <section className="seccion seccion-oscura" id="como-funciona">

@@ -20,7 +20,7 @@
 # Puertos expuestos en la instancia:
 #   80    Gestor       front y API para administrar Orion (requiere login) y entrada de
 #                      lecturas de los sensores (requiere la clave de cada dispositivo)
-#   443   Landing      pagina publica con lecturas e historico (sin login, HTTP)
+#   443   Landing      pagina publica con lecturas, historico limpio y alertas (sin login, HTTP)
 #   3000  Grafana      tableros de visualizacion
 #
 # Solo en la propia instancia (127.0.0.1), porque no tienen autenticacion: nadie de
@@ -242,9 +242,10 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Landing: pagina publica (sin login) con las lecturas actuales de Orion y el
-  # historico de QuantumLeap/CrateDB. Su API es de solo lectura. Se construye
-  # desde ./landing con el mismo stack del gestor (FastAPI + React).
+  # Landing: pagina publica (sin login) con las lecturas actuales de Orion, el
+  # historico ya limpio (Postgres, via el servicio de limpieza) y las alertas
+  # activas. Su API es de solo lectura. Se construye desde ./landing con el mismo
+  # stack del gestor (FastAPI + React).
   # Se publica en el 443 pero sirve HTTP plano: abrir con http://<host>:443
   # ---------------------------------------------------------------------------
   landing:
@@ -252,14 +253,16 @@ services:
     container_name: landing
     depends_on:
       - orion
-      - quantumleap
+      - limpieza
+      - alertas
     networks:
       - default
     ports:
       - "443:8000"
     environment:
       - ORION_URL=http://orion:1026
-      - QUANTUMLEAP_URL=http://quantumleap:8668
+      - LIMPIEZA_URL=http://limpieza:8000
+      - ALERTAS_URL=http://alertas:8000
     restart: unless-stopped
 
 networks:

@@ -23,4 +23,5 @@ export const api = {
   estado: () => pedir('/estado'),
   sensores: () => pedir('/sensores'),
   historico: (sensorId, horas) => pedir(`/historico/${encodeURIComponent(sensorId)}?horas=${horas}`),
+  alertas: () => pedir('/alertas'),
 }

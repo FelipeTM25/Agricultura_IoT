@@ -49,8 +49,8 @@ export default function Historico({ sensorId }) {
           <p className="kicker kicker-oscuro">Histórico</p>
           <h2>Cómo ha cambiado el cultivo</h2>
           <p className="texto-suave">
-            Lecturas guardadas en CrateDB por QuantumLeap
-            {datos?.intervalo_min ? `, promediadas cada ${datos.intervalo_min} min` : ''}.
+            Datos ya limpios: sin lecturas imposibles, picos ni duplicados
+            {datos?.intervalo_min ? `, promediados cada ${datos.intervalo_min} min` : ''}. Se actualizan cada 15 minutos.
           </p>
         </div>
       </div>
@@ -76,7 +76,7 @@ export default function Historico({ sensorId }) {
           <Icono nombre="grafica" tamano={32} />
           <p>
             {sensorId
-              ? 'Todavía no hay histórico en este rango. Se va llenando a medida que el sensor envía lecturas.'
+              ? 'Todavía no hay datos limpios en este rango. Se van llenando cada 15 minutos a medida que el sensor envía lecturas.'
               : 'Cuando haya un sensor enviando datos, aquí aparecerá su histórico.'}
           </p>
         </div>

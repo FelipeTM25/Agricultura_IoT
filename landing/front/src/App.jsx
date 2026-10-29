@@ -23,6 +23,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [estado, setEstado] = useState(null)
   const [sensorId, setSensorId] = useState(null)
+  const [alertas, setAlertas] = useState([])
 
   useEffect(() => {
     const cargarSensores = () =>
@@ -36,15 +37,21 @@ export default function App() {
         })
         .catch((err) => setError(`No se pudieron cargar las lecturas: ${err.message}`))
         .finally(() => setCargando(false))
+    // Si el servicio de alertas no responde se deja la ultima lista: no es motivo para un error en pantalla
+    const cargarAlertas = () => api.alertas().then(setAlertas).catch(() => {})
     const cargarEstado = () =>
       api
         .estado()
         .then(setEstado)
-        .catch(() => setEstado({ orion: false, quantumleap: false }))
+        .catch(() => setEstado({ orion: false, limpieza: false, alertas: false }))
 
     cargarSensores()
+    cargarAlertas()
     cargarEstado()
-    const a = setInterval(cargarSensores, REFRESCO_SENSORES_MS)
+    const a = setInterval(() => {
+      cargarSensores()
+      cargarAlertas()
+    }, REFRESCO_SENSORES_MS)
     const b = setInterval(cargarEstado, REFRESCO_ESTADO_MS)
     return () => {
       clearInterval(a)
@@ -53,7 +60,7 @@ export default function App() {
   }, [])
 
   const sensor = sensores.find((s) => s.id === sensorId)
-  const plataformaOk = estado && estado.orion && estado.quantumleap
+  const plataformaOk = estado && estado.orion && estado.limpieza && estado.alertas
 
   return (
     <>
@@ -80,7 +87,7 @@ export default function App() {
 
       <main>
         <Hero sensor={sensor} cargando={cargando} />
-        <EnVivo sensores={sensores} sensorId={sensorId} onElegir={setSensorId} error={error} />
+        <EnVivo sensores={sensores} sensorId={sensorId} onElegir={setSensorId} error={error} alertas={alertas} />
         <Historico sensorId={sensorId} />
         <Ubicacion sensores={sensores} />
         <ComoFunciona estado={estado} />

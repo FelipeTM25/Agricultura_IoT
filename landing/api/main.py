@@ -1,15 +1,15 @@
 """API publica de la landing: solo lectura, sin login.
 
-- /api/estado     si Orion y QuantumLeap responden
+- /api/estado     si Orion, la limpieza y las alertas responden
 - /api/sensores   lectura actual de cada sensor (Orion)
-- /api/historico  serie de tiempo de un sensor (QuantumLeap -> CrateDB)
+- /api/historico  serie de tiempo ya limpia de un sensor (Postgres, via el servicio de limpieza)
+- /api/alertas    alertas abiertas (servicio de alertas)
 
 No hay ninguna ruta que cree, cambie o borre datos: eso es del gestor.
 Si existe la carpeta static/ (el front de React ya compilado), se sirve en /.
 """
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -20,9 +20,8 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 
 orion = httpx.AsyncClient(base_url=config.ORION_URL, timeout=8)
-# QuantumLeap solo devuelve las lecturas si la consulta lleva el mismo service path con
-# el que Orion las notifico ("/"); sin la cabecera responde 404 aunque haya datos.
-quantumleap = httpx.AsyncClient(base_url=config.QUANTUMLEAP_URL, timeout=15, headers={"Fiware-ServicePath": "/"})
+limpieza = httpx.AsyncClient(base_url=config.LIMPIEZA_URL, timeout=15)
+alertas = httpx.AsyncClient(base_url=config.ALERTAS_URL, timeout=8)
 
 ID_VALIDO = re.compile(r"^[^\s<>\"'=;()&?/#]+$")
 
@@ -30,8 +29,8 @@ ID_VALIDO = re.compile(r"^[^\s<>\"'=;()&?/#]+$")
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
     yield
-    await orion.aclose()
-    await quantumleap.aclose()
+    for cliente in (orion, limpieza, alertas):
+        await cliente.aclose()
 
 
 app = FastAPI(title="Landing - Agricultura IoT", version="0.1.0", lifespan=ciclo_de_vida)
@@ -47,7 +46,11 @@ async def _responde(cliente: httpx.AsyncClient, ruta: str) -> bool:
 
 @api.get("/estado")
 async def estado():
-    return {"orion": await _responde(orion, "/version"), "quantumleap": await _responde(quantumleap, "/version")}
+    return {
+        "orion": await _responde(orion, "/version"),
+        "limpieza": await _responde(limpieza, "/estado"),
+        "alertas": await _responde(alertas, "/estado"),
+    }
 
 
 def _ubicacion(atributo: dict | None) -> dict | None:
@@ -87,62 +90,33 @@ async def sensores():
     return resultado
 
 
-# Tamano del intervalo segun el rango pedido, para no mandar miles de puntos al navegador
-def _intervalo(horas: int) -> timedelta:
-    if horas <= 1:
-        return timedelta(minutes=1)
-    if horas <= 6:
-        return timedelta(minutes=5)
-    if horas <= 24:
-        return timedelta(minutes=15)
-    return timedelta(hours=1)
+async def _pedir(cliente: httpx.AsyncClient, nombre: str, ruta: str, params: dict | None = None):
+    try:
+        r = await cliente.get(ruta, params=params)
+    except httpx.HTTPError:
+        raise HTTPException(502, f"El servicio de {nombre} no responde")
+    if r.status_code != 200:
+        raise HTTPException(502, f"El servicio de {nombre} respondio {r.status_code}")
+    return r.json()
 
 
 @api.get("/historico/{sensor_id}")
 async def historico(sensor_id: str, horas: int = Query(24, ge=1, le=168)):
-    """Promedio por intervalo de cada variable en las ultimas `horas`.
-
-    Se piden todos los atributos y se filtran aqui: si se le pide a QuantumLeap un
-    atributo que todavia no existe como columna en CrateDB, falla la consulta entera.
-    """
+    """Promedio por intervalo de cada variable en las ultimas `horas`, con los datos ya limpios
+    (sin lecturas imposibles, picos ni duplicados). Llegan con hasta 15 min de retraso."""
     if not ID_VALIDO.match(sensor_id):
         raise HTTPException(422, "Id de sensor invalido")
+    datos = await _pedir(limpieza, "limpieza", f"/mediciones/{quote(sensor_id, safe='')}", {"horas": horas})
+    datos["series"] = {n: s for n, s in datos["series"].items() if n in config.VARIABLES}
+    return datos
 
-    desde = datetime.now(timezone.utc) - timedelta(hours=horas)
-    try:
-        r = await quantumleap.get(
-            f"/v2/entities/{quote(sensor_id, safe='')}",
-            params={"type": config.TIPO_SENSOR, "fromDate": desde.isoformat(), "limit": 10000},
-        )
-    except httpx.HTTPError:
-        raise HTTPException(502, "QuantumLeap no responde")
 
-    paso = _intervalo(horas)
-    vacio = {"desde": desde.isoformat(), "intervalo_min": int(paso.total_seconds() // 60), "puntos": 0, "series": {}}
-    if r.status_code == 404:  # todavia no hay historico para ese sensor
-        return vacio
-    if r.status_code != 200:
-        raise HTTPException(502, f"QuantumLeap respondio {r.status_code}")
-
-    datos = r.json()
-    tiempos = [datetime.fromisoformat(t) for t in datos.get("index", [])]
-    series = {}
-    for atributo in datos.get("attributes", []):
-        nombre = atributo["attrName"]
-        if nombre not in config.VARIABLES:
-            continue
-        # Agrupa las lecturas por intervalo y promedia
-        grupos: dict[datetime, list[float]] = {}
-        for t, v in zip(tiempos, atributo["values"]):
-            if isinstance(v, (int, float)):
-                inicio = datetime.fromtimestamp(t.timestamp() // paso.total_seconds() * paso.total_seconds(), timezone.utc)
-                grupos.setdefault(inicio, []).append(v)
-        if grupos:
-            series[nombre] = [
-                {"t": inicio.isoformat(), "v": round(sum(vs) / len(vs), 2)} for inicio, vs in sorted(grupos.items())
-            ]
-
-    return {**vacio, "puntos": len(tiempos), "series": series}
+@api.get("/alertas")
+async def alertas_activas():
+    """Alertas abiertas: que esta pasando en el cultivo y que se recomienda hacer."""
+    lista = await _pedir(alertas, "alertas", "/alertas", {"activas": "true"})
+    campos = ("sensor_id", "variable", "operador", "limite", "titulo", "accion", "valor", "inicio")
+    return [{c: a[c] for c in campos} for a in lista]
 
 
 app.include_router(api)

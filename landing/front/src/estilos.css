@@ -130,6 +130,15 @@ p { line-height: 1.55; }
 .tile-valor { margin: 0; font-size: 2.1rem; font-weight: 700; letter-spacing: -0.02em; }
 .tile-valor small { font-size: 0.95rem; font-weight: 600; color: var(--texto-suave); margin-left: 4px; }
 .tile-pie { margin: 4px 0 0; font-size: 0.8rem; color: var(--texto-suave); }
+.tile-alerta { border-color: var(--arcilla); }
+.tile-alerta .tile-icono { background: var(--arcilla-suave); color: var(--arcilla); }
+
+/* Alertas activas del sensor elegido */
+.alertas { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 10px; }
+.alertas li { display: flex; gap: 12px; align-items: flex-start; background: var(--arcilla-suave); border: 1px solid var(--arcilla); border-radius: var(--radio); padding: 14px 16px; color: #8a2f1c; }
+.alertas li div { display: flex; flex-direction: column; gap: 2px; }
+.alertas strong { color: #6e2414; }
+.alertas-accion { font-weight: 600; }
 
 /* Graficas: small multiples, una por variable */
 .multiples { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; transition: opacity 0.2s; }
@@ -180,7 +189,7 @@ p { line-height: 1.55; }
 .ubicacion-lista span { color: var(--texto-suave); font-size: 0.86rem; font-variant-numeric: tabular-nums; }
 
 /* Como funciona */
-.flujo { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; counter-reset: paso; }
+.flujo { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; counter-reset: paso; }
 .flujo li { position: relative; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: var(--radio); padding: 22px 18px; }
 .flujo li:not(:last-child)::after {
   content: '→'; position: absolute; right: -13px; top: 44px; color: var(--trigo); font-weight: 700; z-index: 1;
