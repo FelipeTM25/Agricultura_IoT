@@ -90,11 +90,20 @@ export const api = {
   borrarEntidad: (entidadId) => pedir('DELETE', `/entidades/${id(entidadId)}`),
   historico: (entidadId, tipo, horas) =>
     pedir('GET', `/entidades/${id(entidadId)}/historico?tipo=${id(tipo)}&horas=${horas}`),
+  limpios: (entidadId, horas) => pedir('GET', `/entidades/${id(entidadId)}/limpios?horas=${horas}`),
   exportar: (entidadId, opciones) =>
     pedir('GET', `/entidades/${id(entidadId)}/exportar?${new URLSearchParams(opciones)}`, undefined, { comoArchivo: true }),
 
   limpieza: () => pedir('GET', '/limpieza'),
   ejecutarLimpieza: () => pedir('POST', '/limpieza/ejecutar'),
+
+  alertas: (activas = false) => pedir('GET', `/alertas?activas=${activas}`),
+  estadoAlertas: () => pedir('GET', '/alertas/estado'),
+  probarAlertas: () => pedir('POST', '/alertas/probar'),
+  umbrales: () => pedir('GET', '/alertas/umbrales'),
+  crearUmbral: (umbral) => pedir('POST', '/alertas/umbrales', umbral),
+  editarUmbral: (umbralId, umbral) => pedir('PUT', `/alertas/umbrales/${id(umbralId)}`, umbral),
+  borrarUmbral: (umbralId) => pedir('DELETE', `/alertas/umbrales/${id(umbralId)}`),
 
   suscripciones: () => pedir('GET', '/suscripciones'),
   crearSuscripcion: (suscripcion) => pedir('POST', '/suscripciones', suscripcion),

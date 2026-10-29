@@ -13,14 +13,15 @@ export default function Resumen() {
   const [datos, setDatos] = useState(null)
 
   useEffect(() => {
-    Promise.allSettled([api.estado(), api.entidades(), api.suscripciones()]).then(([estado, entidades, suscripciones]) =>
-      setDatos({ estado, entidades, suscripciones }),
+    Promise.allSettled([api.estado(), api.entidades(), api.suscripciones(), api.alertas(true)]).then(
+      ([estado, entidades, suscripciones, alertas]) => setDatos({ estado, entidades, suscripciones, alertas }),
     )
   }, [])
 
   if (!datos) return <p className="texto-suave">Cargando…</p>
 
-  const { estado, entidades, suscripciones } = datos
+  const { estado, entidades, suscripciones, alertas } = datos
+  const activas = alertas.status === 'fulfilled' ? alertas.value : null
   const orionOk = estado.status === 'fulfilled'
   const listaEntidades = entidades.status === 'fulfilled' ? entidades.value : []
   const tipos = new Set(listaEntidades.map((e) => e.type))
@@ -58,6 +59,18 @@ export default function Resumen() {
             <span className="texto-suave">notificando cambios</span>
           </div>
         </article>
+        <a href="#alertas" className="tarjeta indicador indicador-enlace">
+          <span className={`indicador-icono ${activas?.length ? 'indicador-error' : ''}`}>
+            <Icono nombre="alerta" tamano={22} />
+          </span>
+          <div>
+            <small>Alertas activas</small>
+            <strong>{activas ? activas.length : '—'}</strong>
+            <span className="texto-suave">
+              {activas === null ? 'servicio sin respuesta' : activas.length ? activas.map((a) => a.titulo).join(' · ') : 'todo en rango'}
+            </span>
+          </div>
+        </a>
       </div>
 
       <div className="seccion-cabecera">

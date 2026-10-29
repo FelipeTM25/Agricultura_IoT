@@ -12,6 +12,13 @@ const RANGOS = [
   { horas: 168, texto: '7 días' },
 ]
 
+// Limpios: Postgres (promedios sin lecturas imposibles ni picos, cada 15 min).
+// Crudos: CrateDB tal como lo guardo QuantumLeap, al instante.
+const FUENTES = [
+  { clave: 'limpios', texto: 'Limpios' },
+  { clave: 'crudos', texto: 'Crudos' },
+]
+
 const REFRESCO_MS = 60 * 1000
 
 // La entidad elegida viaja en la URL (#historico/sensor01) para poder llegar desde la tabla de sensores
@@ -21,6 +28,7 @@ export default function Historico() {
   const [entidades, setEntidades] = useState([])
   const [entidadId, setEntidadId] = useState(entidadDeLaUrl)
   const [horas, setHoras] = useState(24)
+  const [fuente, setFuente] = useState('limpios')
   const [datos, setDatos] = useState(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
@@ -44,7 +52,8 @@ export default function Historico() {
     if (!entidad) return
     setCargando(true)
     try {
-      const respuesta = await api.historico(entidad.id, entidad.type, horas)
+      const respuesta =
+        fuente === 'limpios' ? await api.limpios(entidad.id, horas) : await api.historico(entidad.id, entidad.type, horas)
       setDatos({ ...respuesta, hasta: Date.now() })
       setError('')
     } catch (err) {
@@ -52,7 +61,7 @@ export default function Historico() {
     } finally {
       setCargando(false)
     }
-  }, [entidad, horas])
+  }, [entidad, horas, fuente])
 
   useEffect(() => {
     cargar()
@@ -80,6 +89,21 @@ export default function Historico() {
             </option>
           ))}
         </select>
+        <div className="filtros" role="group" aria-label="Datos">
+          {FUENTES.map((f) => (
+            <button
+              key={f.clave}
+              className={f.clave === fuente ? 'activo' : ''}
+              aria-pressed={f.clave === fuente}
+              onClick={() => {
+                setFuente(f.clave)
+                setDatos(null)
+              }}
+            >
+              {f.texto}
+            </button>
+          ))}
+        </div>
         <div className="filtros" role="group" aria-label="Rango de tiempo">
           {RANGOS.map((r) => (
             <button key={r.horas} className={r.horas === horas ? 'activo' : ''} aria-pressed={r.horas === horas} onClick={() => setHoras(r.horas)}>
@@ -91,7 +115,7 @@ export default function Historico() {
           <Icono nombre="recargar" /> Actualizar
         </button>
         {entidad && (
-          <button className="boton boton-primario" onClick={() => setExportando(true)}>
+          <button className="boton boton-primario" onClick={() => setExportando(true)} title="Exporta las lecturas crudas de CrateDB">
             <Icono nombre="descargar" /> Exportar
           </button>
         )}
@@ -104,8 +128,12 @@ export default function Historico() {
 
       {datos && (
         <p className="texto-suave">
-          {datos.puntos} {datos.puntos === 1 ? 'lectura' : 'lecturas'} en CrateDB en este rango
-          {datos.puntos ? `, promediadas cada ${datos.intervalo_min} min` : ''}.
+          {fuente === 'limpios'
+            ? `${datos.puntos} ${datos.puntos === 1 ? 'lectura válida' : 'lecturas válidas'} en Postgres en este rango` +
+              (datos.puntos ? `, promediadas cada ${datos.intervalo_min} min` : '') +
+              ` · ${datos.descartadas} descartadas por la limpieza. Se actualizan cada 15 min.`
+            : `${datos.puntos} ${datos.puntos === 1 ? 'lectura' : 'lecturas'} crudas en CrateDB en este rango` +
+              (datos.puntos ? `, promediadas cada ${datos.intervalo_min} min.` : '.')}
         </p>
       )}
       {aviso && <p className="aviso aviso-ok">{aviso}</p>}
@@ -131,13 +159,27 @@ export default function Historico() {
       ) : datos && nombres.length === 0 ? (
         <div className="tarjeta vacio">
           <Icono nombre="grafica" tamano={32} />
-          <p>
-            No hay histórico de <strong>{entidad.id}</strong> en este rango. Revisa que exista una suscripción de tipo{' '}
-            <code>{entidad.type}</code> hacia QuantumLeap y que el sensor esté enviando.
-          </p>
-          <a href="#suscripciones" className="boton boton-primario">
-            <Icono nombre="campana" /> Ir a suscripciones
-          </a>
+          {fuente === 'limpios' ? (
+            <>
+              <p>
+                No hay datos limpios de <strong>{entidad.id}</strong> en este rango. La limpieza corre cada 15 min; si el sensor
+                acaba de empezar a enviar, mira los datos crudos o lánzala a mano.
+              </p>
+              <a href="#limpieza" className="boton boton-primario">
+                <Icono nombre="filtro" /> Ir a limpieza
+              </a>
+            </>
+          ) : (
+            <>
+              <p>
+                No hay histórico de <strong>{entidad.id}</strong> en este rango. Revisa que exista una suscripción de tipo{' '}
+                <code>{entidad.type}</code> hacia QuantumLeap y que el sensor esté enviando.
+              </p>
+              <a href="#suscripciones" className="boton boton-primario">
+                <Icono nombre="campana" /> Ir a suscripciones
+              </a>
+            </>
+          )}
         </div>
       ) : verTabla ? (
         <TablaHistorico datos={datos} nombres={nombres} />

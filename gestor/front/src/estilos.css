@@ -184,6 +184,8 @@ input[type='checkbox'], input[type='radio'] { width: auto; accent-color: var(--h
 .indicador strong { font-size: 1.5rem; }
 .indicador .texto-suave { font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .indicador-icono { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 12px; background: var(--brote-suave); color: var(--hoja); flex-shrink: 0; }
+.indicador-enlace { color: inherit; text-decoration: none; }
+.indicador-enlace:hover { border-color: var(--hoja); }
 .indicador-trigo { background: var(--trigo-suave); color: #9a7212; }
 .indicador-tierra { background: var(--tierra-suave); color: var(--tierra); }
 .indicador-error { background: var(--arcilla-suave); color: var(--arcilla); }
@@ -242,6 +244,12 @@ input[type='checkbox'], input[type='radio'] { width: auto; accent-color: var(--h
 
 /* Limpieza */
 .reglas { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 0.88rem; color: var(--texto-suave); }
+.fila-umbral { grid-template-columns: 1.4fr 1fr 0.8fr; }
+.alertas-activas { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.alerta-activa { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-color: var(--arcilla); background: var(--arcilla-suave); color: #8a2f1c; }
+.alerta-activa div { display: flex; flex-direction: column; gap: 3px; font-size: 0.88rem; }
+.alerta-activa strong { color: #6e2414; font-size: 0.95rem; }
+.alerta-accion { font-weight: 600; }
 .reglas code { color: var(--hoja-oscura); background: var(--brote-suave); margin-right: 6px; }
 
 /* --- Modal ----------------------------------------------------------------- */

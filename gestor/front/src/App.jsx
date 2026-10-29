@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { sesion } from './api.js'
 import Icono from './componentes/Icono.jsx'
 import Sidebar from './componentes/Sidebar.jsx'
+import Alertas from './paginas/Alertas.jsx'
 import Entidades from './paginas/Entidades.jsx'
 import Historico from './paginas/Historico.jsx'
 import Limpieza from './paginas/Limpieza.jsx'
@@ -17,6 +18,7 @@ const PAGINAS = {
   historico: { titulo: 'Histórico', icono: 'grafica', componente: Historico },
   suscripciones: { titulo: 'Suscripciones', icono: 'campana', componente: Suscripciones },
   limpieza: { titulo: 'Limpieza de datos', icono: 'filtro', componente: Limpieza },
+  alertas: { titulo: 'Alertas', icono: 'alerta', componente: Alertas },
 }
 
 const paginaDeLaUrl = () => {

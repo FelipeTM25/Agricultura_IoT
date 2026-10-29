@@ -14,6 +14,8 @@ ORION_URL = os.getenv("ORION_URL", "http://localhost:1026").rstrip("/")
 QUANTUMLEAP_URL = os.getenv("QUANTUMLEAP_URL", "http://localhost:8668").rstrip("/")
 # Servicio que limpia CrateDB -> Postgres (solo accesible dentro de la red de Docker)
 LIMPIEZA_URL = os.getenv("LIMPIEZA_URL", "http://localhost:8002").rstrip("/")
+# Servicio de alertas: umbrales y alertas abiertas (tambien solo dentro de la red de Docker)
+ALERTAS_URL = os.getenv("ALERTAS_URL", "http://localhost:8003").rstrip("/")
 
 # Unico usuario del sistema por ahora: el administrador.
 ADMIN_USER = _obligatoria("ADMIN_USER")

@@ -1,5 +1,5 @@
-"""API del gestor de Orion: login del administrador, entidades, suscripciones, historico, limpieza
-y entrada de lecturas de los dispositivos (que ya no escriben directo en Orion).
+"""API del gestor de Orion: login del administrador, entidades, suscripciones, historico, limpieza,
+alertas y entrada de lecturas de los dispositivos (que ya no escriben directo en Orion).
 
 Todas las rutas viven bajo /api. La documentacion interactiva queda en /docs.
 Si existe la carpeta static/ (el front de React ya compilado), se sirve en /.
@@ -7,11 +7,11 @@ Si existe la carpeta static/ (el front de React ya compilado), se sirve en /.
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -147,6 +147,12 @@ async def historico_entidad(entidad_id: str, tipo: str | None = None, horas: int
     return await historico.consultar(entidad_id, tipo, horas)
 
 
+@protegida.get("/entidades/{entidad_id}/limpios", tags=["entidades"])
+async def limpios_entidad(entidad_id: str, horas: int = Query(24, ge=1, le=168)):
+    """Serie ya limpia de cada variable (Postgres, la escribe el servicio de limpieza cada 15 min)."""
+    return await _servicio("limpieza", "GET", f"/mediciones/{quote(entidad_id, safe='')}", params={"horas": horas})
+
+
 @protegida.get("/entidades/{entidad_id}/exportar", tags=["entidades"])
 async def exportar_entidad(
     entidad_id: str,
@@ -190,33 +196,77 @@ async def borrar_suscripcion(suscripcion_id: str):
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# --- Limpieza (CrateDB -> Postgres) -------------------------------------------
+# --- Servicios internos: limpieza (CrateDB -> Postgres) y alertas ---------------
 
-async def _limpieza(metodo: str, ruta: str, timeout: float):
+SERVICIOS = {"limpieza": config.LIMPIEZA_URL, "alertas": config.ALERTAS_URL}
+
+
+async def _servicio(nombre: str, metodo: str, ruta: str, timeout: float = 15, **kwargs) -> Any:
+    url = SERVICIOS[nombre]
     try:
-        async with httpx.AsyncClient(base_url=config.LIMPIEZA_URL, timeout=timeout) as cliente:
-            r = await cliente.request(metodo, ruta)
+        async with httpx.AsyncClient(base_url=url, timeout=timeout) as cliente:
+            r = await cliente.request(metodo, ruta, **kwargs)
     except httpx.HTTPError as e:
-        raise HTTPException(502, f"No se pudo conectar con el servicio de limpieza ({config.LIMPIEZA_URL}): {e}")
+        raise HTTPException(502, f"No se pudo conectar con el servicio de {nombre} ({url}): {e}")
     if r.status_code >= 400:
         try:
             detalle = r.json().get("detail", r.text)
         except ValueError:
             detalle = r.text
-        raise HTTPException(r.status_code, f"Limpieza: {detalle}")
-    return r.json()
+        raise HTTPException(r.status_code, detalle if isinstance(detalle, list) else f"{nombre.capitalize()}: {detalle}")
+    return None if r.status_code == 204 else r.json()
 
 
 @protegida.get("/limpieza", tags=["limpieza"])
 async def estado_limpieza():
     """Ultimas ejecuciones, resumen de los datos limpios en Postgres y reglas aplicadas."""
-    return await _limpieza("GET", "/estado", 15)
+    return await _servicio("limpieza", "GET", "/estado")
 
 
 @protegida.post("/limpieza/ejecutar", tags=["limpieza"])
 async def ejecutar_limpieza():
     """Limpia ahora lo nuevo de CrateDB y lo guarda en Postgres (ademas de la limpieza automatica)."""
-    return await _limpieza("POST", "/limpiar", 300)
+    return await _servicio("limpieza", "POST", "/limpiar", 300)
+
+
+@protegida.get("/alertas", tags=["alertas"])
+async def listar_alertas(activas: bool = False, limite: int = Query(50, ge=1, le=500)):
+    """Historial de alertas (las abiertas no tienen `fin`)."""
+    return await _servicio("alertas", "GET", "/alertas", params={"activas": activas, "limite": limite})
+
+
+@protegida.get("/alertas/estado", tags=["alertas"])
+async def estado_alertas():
+    """Si el correo esta configurado, la suscripcion de Orion que alimenta las alertas y cuantas hay abiertas."""
+    return await _servicio("alertas", "GET", "/estado")
+
+
+@protegida.post("/alertas/probar", tags=["alertas"])
+async def probar_alertas():
+    """Manda un correo de prueba a los destinatarios de las alertas."""
+    return await _servicio("alertas", "POST", "/probar")
+
+
+@protegida.get("/alertas/umbrales", tags=["alertas"])
+async def listar_umbrales():
+    return await _servicio("alertas", "GET", "/umbrales")
+
+
+# El servicio de alertas valida el cuerpo; aqui solo se reenvia
+@protegida.post("/alertas/umbrales", status_code=status.HTTP_201_CREATED, tags=["alertas"])
+async def crear_umbral(umbral: dict = Body(...)):
+    return await _servicio("alertas", "POST", "/umbrales", json=umbral)
+
+
+@protegida.put("/alertas/umbrales/{umbral_id}", tags=["alertas"])
+async def editar_umbral(umbral_id: int, umbral: dict = Body(...)):
+    return await _servicio("alertas", "PUT", f"/umbrales/{umbral_id}", json=umbral)
+
+
+@protegida.delete("/alertas/umbrales/{umbral_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["alertas"])
+async def borrar_umbral(umbral_id: int):
+    await _servicio("alertas", "DELETE", f"/umbrales/{umbral_id}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 app.include_router(publica)

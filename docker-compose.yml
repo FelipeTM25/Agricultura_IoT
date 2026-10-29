@@ -216,8 +216,9 @@ services:
 
   # ---------------------------------------------------------------------------
   # Gestor: API (FastAPI) + front (React) para administrar las entidades y
-  # suscripciones de Orion con usuario y contrasena, ver su historico (QuantumLeap),
-  # exportarlo y lanzar la limpieza de datos. Se construye desde
+  # suscripciones de Orion con usuario y contrasena, ver su historico crudo
+  # (QuantumLeap) o limpio (Postgres), exportarlo, lanzar la limpieza de datos y
+  # configurar las alertas. Se construye desde
   # ./gestor y lee las credenciales de gestor/.env (ver gestor/.env.example).
   # Docs de la API en http://<host>/docs
   # ---------------------------------------------------------------------------
@@ -235,6 +236,7 @@ services:
       - ORION_URL=http://orion:1026
       - QUANTUMLEAP_URL=http://quantumleap:8668
       - LIMPIEZA_URL=http://limpieza:8000
+      - ALERTAS_URL=http://alertas:8000
     env_file:
       - ./gestor/.env
     restart: unless-stopped
