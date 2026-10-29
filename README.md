@@ -8,12 +8,14 @@ Compose en una instancia EC2 de AWS con Ubuntu.
 
 ```
 Sensor --HTTP+clave--> Gestor --> Orion-LD (estado actual) --suscripcion--> QuantumLeap
-                    |                                          |
-                 MongoDB                                    CrateDB (historico crudo)
-                                                               |
-                                                           limpieza (cada 15 min o con boton)
-                                                               |
-                                                           Postgres (datos limpios) --> Grafana
+                                   |      |                                    |
+                                MongoDB   +--suscripcion--> alertas         CrateDB (historico crudo)
+                                             (umbrales -> correo)              |
+                                                    |                      limpieza (cada 15 min o con boton)
+                                                    |                          |
+                                                    +--------------------> Postgres (datos limpios y alertas)
+                                                                               |
+                                                                  Grafana, gestor y landing
 ```
 
 | Servicio    | Imagen                        | Puerto | Funcion                                         |
@@ -25,8 +27,9 @@ Sensor --HTTP+clave--> Gestor --> Orion-LD (estado actual) --suscripcion--> Quan
 | Grafana     | `grafana/grafana`             | 3000   | Tableros (desde Postgres, ya provisionados)     |
 | Postgres    | `postgres:16-alpine`          | -      | Datos limpios (promedios cada 5 min)            |
 | Limpieza    | se construye desde `limpieza/`| -      | CrateDB -> reglas de limpieza -> Postgres       |
+| Alertas     | se construye desde `alertas/` | -      | Umbrales sobre cada lectura de Orion, avisos por correo |
 | Gestor      | se construye desde `gestor/`  | 80     | Administracion con login y entrada de lecturas de los sensores |
-| Landing     | se construye desde `landing/` | 443    | Pagina publica con lecturas e historico         |
+| Landing     | se construye desde `landing/` | 443    | Pagina publica con lecturas, historico limpio y alertas |
 
 ## Contenido del repositorio
 
@@ -37,8 +40,9 @@ Sensor --HTTP+clave--> Gestor --> Orion-LD (estado actual) --suscripcion--> Quan
 | `gestor/`            | Gestor de Orion: API en FastAPI (`api/`) y front en React (`front/`) |
 | `landing/`           | Landing publica: API de solo lectura en FastAPI y front en React |
 | `limpieza/`          | Servicio que limpia el historico de CrateDB y lo guarda en Postgres |
+| `alertas/`           | Servicio de alertas (toma de decisiones) que Orion alimenta por suscripcion |
 | `grafana/`           | Fuente de datos y tablero de Grafana que se cargan solos (provisioning) |
-| `.env.example`       | Plantilla del `.env` de la raiz (credenciales de Postgres) |
+| `.env.example`       | Plantilla del `.env` de la raiz (credenciales de Postgres y correo de las alertas) |
 | `sensor-lilygo/`     | Firmware (PlatformIO) del nodo LilyGO T-Beam que envia las lecturas a Orion por WiFi |
 
 ## Despliegue en EC2
@@ -78,11 +82,11 @@ sudo apt install docker-compose
 
 ### 4. Copiar el proyecto a la instancia
 
-El gestor, la landing y la limpieza se construyen desde sus carpetas, asi que no basta con el
+El gestor, la landing, la limpieza y las alertas se construyen desde sus carpetas, asi que no basta con el
 `docker-compose.yml`: hay que copiar el repositorio completo. Desde tu equipo:
 
 ```bash
-scp -i "<tu-llave>.pem" -r docker-compose.yml gestor landing limpieza grafana ubuntu@<DNS-publico-EC2>:agricultura/
+scp -i "<tu-llave>.pem" -r docker-compose.yml gestor landing limpieza alertas grafana ubuntu@<DNS-publico-EC2>:agricultura/
 ```
 
 (antes crear la carpeta en la EC2 con `mkdir ~/agricultura`), o clonar el repo directamente en la EC2.
@@ -96,13 +100,16 @@ python3 -c "import secrets; print(secrets.token_hex(32))"   # pegar el resultado
 nano gestor/.env                                             # cambiar ADMIN_PASSWORD y JWT_SECRET
 ```
 
-Y las de Postgres (las usan Postgres, la limpieza y Grafana; nadie tiene que escribirlas a mano):
+Y las de Postgres (las usan Postgres, la limpieza, las alertas y Grafana; nadie tiene que escribirlas a mano):
 
 ```bash
 cp .env.example .env
 python3 -c "import secrets; print(secrets.token_urlsafe(24))"  # pegar el resultado en POSTGRES_PASSWORD
 nano .env
 ```
+
+En el mismo `.env` van, opcionales, `SMTP_USUARIO` y `SMTP_PASSWORD` para recibir las alertas
+por correo (ver *Alertas* mas abajo).
 
 ### 5. Ajustar `vm.max_map_count` (requerido por CrateDB)
 
@@ -126,7 +133,7 @@ sudo docker compose up -d --build
 ### 7. Verificar
 
 ```bash
-sudo docker ps -a                       # los 6 contenedores deben estar "Up"
+sudo docker ps -a                       # los 10 contenedores deben estar "Up"
 curl localhost:1026/version             # Orion
 curl localhost:8668/version             # QuantumLeap
 curl localhost:4200                     # CrateDB
@@ -165,8 +172,11 @@ Interfaz web en `http://<DNS-publico-EC2>` (puerto 80) para administrar Orion si
   todavia no existe (si ya hay una, la reutiliza). Sirve para tipos nuevos de sensor.
 - Exportar el historico de un sensor (rango de fechas, atributos, agrupacion, CSV o JSON).
 - Ver y lanzar la limpieza de datos (*Limpieza de datos* -> *Limpiar ahora*).
-- Ver el historico de cada sensor (graficas por atributo de 1 h a 7 dias, o tabla), leido de
-  QuantumLeap/CrateDB. Se llega desde *Historico* o desde el icono de grafica de cada sensor.
+- Ver el historico de cada sensor (graficas por atributo de 1 h a 7 dias, o tabla). Con el selector
+  *Limpios / Crudos* se elige entre los datos limpios de Postgres (por defecto) y las lecturas tal
+  como las guardo QuantumLeap en CrateDB. Se llega desde *Historico* o desde el icono de grafica de
+  cada sensor. La exportacion siempre sale de los datos crudos.
+- Configurar las alertas: umbrales, alertas activas e historial, y enviar un correo de prueba (*Alertas*).
 
 La API esta documentada en `http://<DNS-publico-EC2>/docs`. Todas las rutas
 estan bajo `/api` y, salvo `/api/auth/login`, piden el token en la cabecera
@@ -193,18 +203,19 @@ npm run dev
 ## Landing publica
 
 Pagina sin login en `http://<DNS-publico-EC2>:443` para mostrar el proyecto:
-lecturas actuales (Orion), graficas del historico de 1 h a 7 dias (QuantumLeap ->
-CrateDB), mapa con la ubicacion GPS y una explicacion de la arquitectura. Su API
-(`/api/estado`, `/api/sensores`, `/api/historico/<id>?horas=24`) es de solo lectura.
+lecturas actuales (Orion), alertas activas con su recomendacion, graficas del historico
+ya limpio de 1 h a 7 dias (Postgres, por el servicio de limpieza), mapa con la ubicacion GPS
+y una explicacion de la arquitectura. Su API (`/api/estado`, `/api/sensores`,
+`/api/historico/<id>?horas=24`, `/api/alertas`) es de solo lectura.
 
 Se publica en el 443 pero sirve **HTTP**, sin certificado: hay que abrirla como
 `http://...:443`; con `https://` el navegador da error de conexion segura.
 
 Las graficas solo muestran datos si existe la suscripcion de Orion a QuantumLeap
-(se crea desde el gestor, en *Suscripciones*).
+(se crea desde el gestor, en *Suscripciones*) y despues de la primera limpieza (cada 15 min).
 
 Desarrollo local: igual que el gestor, desde `landing/` con
-`ORION_URL=... QUANTUMLEAP_URL=... uvicorn api.main:app --port 8001 --reload` y
+`ORION_URL=... LIMPIEZA_URL=... ALERTAS_URL=... uvicorn api.main:app --port 8001 --reload` y
 `npm run dev` en `landing/front/`.
 
 ## Nodo sensor (LilyGO T-Beam)
@@ -258,6 +269,39 @@ Grafana arranca con la fuente de datos *Postgres (datos limpios)* y el tablero
 **Agricultura IoT · Datos limpios** ya creados (`grafana/provisioning` y `grafana/dashboards`):
 `http://<DNS-publico-EC2>:3000/d/agricultura-limpios`. Si se cambia el tablero desde Grafana,
 exportar el JSON y guardarlo en `grafana/dashboards/agricultura.json`.
+
+## Alertas (toma de decisiones)
+
+El servicio `alertas` es el manejador de mensajes del escenario "suscripcion de Orion": al
+arrancar crea en Orion una suscripcion que le notifica cada lectura de los `SensorAgricola`
+(`http://alertas:8000/notify`, por la red interna) y la compara con los umbrales:
+
+| Umbral inicial | Accion recomendada |
+|----------------|--------------------|
+| temperatura > 35 °C | Dar sombra o ventilar el cultivo y revisar el riego |
+| temperatura < 5 °C | Cubrir el cultivo durante la noche |
+| humedadSuelo < 30 % | Regar |
+| humedadSuelo > 90 % | Suspender el riego y revisar el drenaje |
+| humedad > 90 % | Ventilar: riesgo de hongos |
+
+Se editan desde el gestor (*Alertas*) y viven en la tabla `umbrales` de Postgres. Una alerta se
+abre cuando 2 lecturas seguidas (`ALERTAS_CONFIRMAR_LECTURAS`) cruzan el umbral y se cierra cuando
+otras 2 vuelven a la normalidad; asi se avisa una vez al empezar y otra al normalizarse, y un pico
+suelto no dispara nada. Las lecturas fisicamente imposibles (los mismos rangos de la limpieza) se
+ignoran. Cada alerta queda en la tabla `alertas` y se ve en el gestor y en la landing.
+
+**Correo (opcional):** cada alerta que se abre o se cierra manda un correo por SMTP (Gmail por
+defecto, gratis). En la cuenta de Gmail que envia: activar la verificacion en 2 pasos y crear una
+contrasena de aplicacion en `https://myaccount.google.com/apppasswords`. En el `.env` de la raiz poner
+`SMTP_USUARIO` (el correo), `SMTP_PASSWORD` (la contrasena de aplicacion, no la normal) y, si llegan a
+otras personas, `ALERTAS_CORREO_DESTINO=uno@x.com,otro@y.com` (vacio = al mismo remitente). Recrear el
+servicio:
+
+```bash
+sudo docker compose up -d alertas
+```
+
+En el gestor, *Alertas* -> *Enviar correo de prueba* lo comprueba (si no llega, revisar spam).
 
 ## Conectar Grafana a CrateDB (opcional)
 

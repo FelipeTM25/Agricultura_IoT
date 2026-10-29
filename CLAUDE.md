@@ -6,7 +6,8 @@ desplegada con Docker Compose en una instancia EC2 Ubuntu.
 ## Arquitectura
 Sensor --HTTP + X-Api-Key--> Gestor :80 (/api/dispositivos) --red interna--> Orion-LD :1026 (estado actual, MongoDB) --suscripcion--> QuantumLeap :8668
 --> CrateDB :4200/:5432 (historico crudo, tablas doc.et<tipo>) --> limpieza (cada 15 min)
---> Postgres (datos limpios, sin puerto publico) --> Grafana :3000
+--> Postgres (datos limpios, sin puerto publico) --> Grafana :3000, gestor y landing.
+Orion --2a suscripcion--> alertas (umbrales -> correo, tabla alertas en Postgres).
 
 ## Archivos
 - `docker-compose.yml`: todos los servicios. Debe mantenerse identico al de la EC2.
@@ -14,14 +15,16 @@ Sensor --HTTP + X-Api-Key--> Gestor :80 (/api/dispositivos) --red interna--> Ori
 - `README.md`: pasos de despliegue en EC2 para quien clone el repo.
 - `landing/`: pagina publica sin login, mismo stack y Dockerfile que el gestor, publicada en el
   host :443 (HTTP plano, sin TLS: se abre con `http://host:443`). API de solo lectura:
-  `/api/estado`, `/api/sensores` (Orion), `/api/historico/{id}?horas=` (QuantumLeap, agrupado en
-  Python por intervalos). Graficas SVG propias (`GraficaLinea.jsx`), mapa con Leaflet + OSM.
+  `/api/estado`, `/api/sensores` (Orion), `/api/historico/{id}?horas=` (datos limpios, via
+  `limpieza` /mediciones; ya no usa QuantumLeap), `/api/alertas` (abiertas, via `alertas`). Graficas SVG propias (`GraficaLinea.jsx`), mapa con Leaflet + OSM.
 - `gestor/`: gestor de Orion en un solo contenedor (host :80 -> contenedor 8000). Dockerfile multi-etapa:
   compila `front/` (React + Vite) y lo sirve como estatico desde `api/` (FastAPI, rutas bajo `/api`,
   docs en `/docs`). Login de un unico admin con JWT; credenciales en `gestor/.env` (no se sube,
   plantilla en `gestor/.env.example`). La API habla con Orion por NGSI-v2 (`ORION_URL`) y lee el
   historico de QuantumLeap (`QUANTUMLEAP_URL`, `/api/entidades/{id}/historico`, todos los atributos
-  numericos). `GraficaLinea.jsx` es copia de la de la landing (solo cambia el import de `formatear`).
+  numericos). `/api/entidades/{id}/limpios` lee los datos limpios (selector Limpios/Crudos del
+  Historico; exportar sigue saliendo de CrateDB). `/api/alertas/...` reenvia al servicio de alertas
+  (umbrales CRUD, estado, probar). `GraficaLinea.jsx` es copia de la de la landing (solo cambia el import de `formatear`).
   Entrada de los sensores en `api/dispositivos.py`: `POST /api/dispositivos/{id}/lecturas` y
   `GET .../ping`, clave por dispositivo en `DISPOSITIVOS=id:clave,...` de gestor/.env (no es el login
   del admin; solo escribe su propia entidad). JSON simple {"var": num, "ubicacion": {lat, lon}} que el
@@ -31,9 +34,20 @@ Sensor --HTTP + X-Api-Key--> Gestor :80 (/api/dispositivos) --red interna--> Ori
   Lee CrateDB por `/_sql` (columnas en minusculas: humedadsuelo -> humedadSuelo), aplica
   `app/reglas.py` y escribe en Postgres `mediciones` (promedio cada 5 min), `descartes`,
   `ejecuciones` y `avance` (incremental, reprocesa el ultimo intervalo; idempotente).
+  `GET /mediciones/{id}?horas=` devuelve la serie limpia (reagrupa con promedio ponderado por muestras).
+  Es la ETL: se quedo en Python con su propio ciclo asyncio (el profe aprobo no usar Airflow/NiFi).
+- `alertas/`: manejador de mensajes (escenario 2: suscripcion de Orion). Sin puerto publico. Al
+  arrancar crea/revisa (cada 5 min) la suscripcion Orion -> `http://alertas:8000/notify` (tipo
+  SensorAgricola, attrs de las 5 variables). Evalua cada lectura contra la tabla `umbrales` (se
+  siembra con 5 umbrales la primera vez), abre/cierra alertas en `alertas` tras
+  `ALERTAS_CONFIRMAR_LECTURAS` (2) lecturas seguidas e ignora valores imposibles (copia de RANGOS de
+  limpieza). Avisa por correo SMTP (Gmail con contrasena de aplicacion: `SMTP_USUARIO`,
+  `SMTP_PASSWORD`, `ALERTAS_CORREO_DESTINO` en el `.env` raiz; opcional). No Telegram (el usuario no
+  lo usa) ni SMS (AWS SNS bloqueado en la cuenta). El front consulta cada 15-30 s (sin websockets).
 - `grafana/`: provisioning de la fuente Postgres (uid `postgres-limpios`) y del tablero
   `agricultura-limpios` (JSON generado; colores validados con el skill dataviz para tema oscuro).
-- `.env` en la raiz (no se sube; plantilla `.env.example`): POSTGRES_* para postgres, limpieza y grafana.
+- `.env` en la raiz (no se sube; plantilla `.env.example`): POSTGRES_* para postgres, limpieza, alertas y grafana;
+  SMTP_*, ALERTAS_CORREO_DESTINO y ALERTAS_CONFIRMAR_LECTURAS para alertas.
 - `sensor-lilygo/`: firmware PlatformIO del nodo (antes `TXlora`, que transmitia por LoRa para un
   examen). Credenciales en `include/secretos.h` (no se sube, plantilla `secretos.example.h`).
   `src/LoRaBoards.*` y `utilities.h` son del ejemplo de LilyGO; solo se desactivo su softAP WiFi.
@@ -91,7 +105,11 @@ Un tipo por dispositivo => QuantumLeap guarda todo en `doc.etsensoragricola`.
 - El nodo escribe `sensor01` en Orion por UPBWiFi. Suscripcion Orion -> QuantumLeap creada el
   2026-10-13 (`6ace58aa4abd323b28ea3081`, tipo SensorAgricola, idPattern .*): CrateDB ya guarda historico.
 - El compose, `gestor/` y `landing/` de la EC2 son los del repo (subidos con tar por ssh, sin
-  node_modules ni .env). Respaldos del compose: `~/agricultura/docker-compose.yml.bak-2026-10-08`, `.bak-2026-10-13`, `.bak-2026-10-15`.
+  node_modules ni .env). Respaldos del compose: `~/agricultura/docker-compose.yml.bak-2026-10-08`, `.bak-2026-10-13`, `.bak-2026-10-15`,
+  `.bak-2026-10-29-alertas`.
+- Desde 2026-10-29: 10 contenedores (+ `alertas`). Suscripcion Orion -> alertas `6ae355b572b592767bea5ad9`
+  (la crea el servicio). `.env` de la raiz de la EC2 tiene SMTP_USUARIO/SMTP_PASSWORD (Gmail, contrasena
+  de aplicacion); correo de prueba enviado OK. CrateDB volvio a 127.0.0.1 tras la presentacion.
 - `gestor/.env` de la EC2 tiene `DISPOSITIVOS=sensor01:<clave>` con la misma clave que el `secretos.h` local.
 - El `.env` de la raiz (Postgres) y `gestor/.env` de la EC2 se generaron alli con password aleatoria (permisos 600); verla con
   `grep ADMIN_PASSWORD ~/agricultura/gestor/.env`.
