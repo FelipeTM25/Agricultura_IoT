@@ -78,11 +78,16 @@
 // 36 (marcado VP en la placa).
 #define HUMEDAD_SUELO_PIN           36
 
-// Calibracion del sensor capacitivo (lectura cruda del ADC, 0..4095). Medirla
-// con el monitor serie: SUELO_SECO_RAW con el sensor al aire y SUELO_MOJADO_RAW
-// con el sensor metido en un vaso de agua. Mas humedad = menor lectura.
-#define SUELO_SECO_RAW              3000
-#define SUELO_MOJADO_RAW            1300
+// Salida digital (DO) del modulo del sensor de suelo: el comparador del modulo la deja
+// en 1 con la sonda seca y la baja a 0 al pasar el umbral del potenciometro.
+#define SUELO_DO_PIN                4
+
+// Calibracion del sensor resistivo (lectura cruda del ADC, 0..4095). Medirla
+// con el monitor serie: SUELO_SECO_RAW con la sonda al aire y SUELO_MOJADO_RAW
+// con la sonda metida en un vaso de agua. Mas humedad = menor lectura.
+// Medido el 2026-10-27: aire 4095, agua 1840.
+#define SUELO_SECO_RAW              4095
+#define SUELO_MOJADO_RAW            1840
 
 // Un sensor capacitivo conectado nunca baja de ~1000 (ni metido en agua). Una lectura
 // por debajo de esto es que al pin no le llega senal (cable, 3V3/GND o pin equivocado):
@@ -383,6 +388,8 @@ static bool iniciarSensores() {
   hdc1080.begin(HDC1080_ADDR);
   bool apOk = ap3216.begin(Wire);
 
+  pinMode(SUELO_DO_PIN, INPUT_PULLUP);
+
   analogReadResolution(12);
   analogSetPinAttenuation(HUMEDAD_SUELO_PIN, ADC_11db); // rango completo 0..~3.1 V
   return apOk;
@@ -528,7 +535,7 @@ void pruning() {
       Serial.printf("   (%u/%u muestras)", s.n, TAM_ARREGLO);
     }
     if (k == HUMEDAD_SUELO) {
-      Serial.printf("   crudo %u", ultimoCrudoSuelo); // para calibrar SUELO_SECO_RAW / SUELO_MOJADO_RAW
+      Serial.printf("   crudo %u   DO %d", ultimoCrudoSuelo, digitalRead(SUELO_DO_PIN)); // crudo: para calibrar SUELO_SECO_RAW / SUELO_MOJADO_RAW
     }
     Serial.println();
   }
