@@ -1,15 +1,16 @@
 """Servicio de limpieza: corre solo cada LIMPIEZA_INTERVALO_MIN y tambien a pedido.
 
 No se publica fuera de la red de Docker: el gestor lo llama por http://limpieza:8000.
-- GET  /estado   ultimas ejecuciones, resumen de Postgres y reglas aplicadas
-- POST /limpiar  ejecuta una limpieza ahora (boton "Limpiar ahora" del gestor)
+- GET  /estado                     ultimas ejecuciones, resumen de Postgres y reglas aplicadas
+- GET  /mediciones/{id}?horas=     serie limpia de un sensor (historico del gestor y la landing)
+- POST /limpiar                    ejecuta una limpieza ahora (boton "Limpiar ahora" del gestor)
 """
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from . import config, proceso, reglas
 
@@ -57,6 +58,21 @@ async def estado():
         },
         **await proceso.estado(),
     }
+
+
+def _intervalo(horas: int) -> timedelta:
+    """Tamano del intervalo segun el rango, igual que el historico crudo del gestor y la landing."""
+    if horas <= 6:
+        return timedelta(minutes=5)
+    if horas <= 24:
+        return timedelta(minutes=15)
+    return timedelta(hours=1)
+
+
+@app.get("/mediciones/{sensor_id}")
+async def mediciones(sensor_id: str, horas: int = Query(24, ge=1, le=168)):
+    desde = datetime.now(timezone.utc) - timedelta(hours=horas)
+    return await proceso.mediciones(sensor_id, desde, _intervalo(horas))
 
 
 @app.post("/limpiar")

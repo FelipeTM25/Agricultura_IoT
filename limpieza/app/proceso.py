@@ -215,6 +215,42 @@ async def limpiar(origen: str) -> dict:
         return {"inicio": inicio.isoformat(), "fin": fin.isoformat(), "origen": origen, **totales, "error": error}
 
 
+async def mediciones(sensor_id: str, desde: datetime, paso: timedelta) -> dict:
+    """Serie limpia de cada variable desde `desde`, reagrupada en intervalos de `paso`.
+
+    Postgres guarda promedios de INTERVALO_DATOS_MIN; para rangos largos se juntan varios,
+    pesando cada promedio por sus muestras para que el resultado sea el promedio real.
+    """
+    paso = max(paso, timedelta(minutes=config.INTERVALO_DATOS_MIN))
+    async with await psycopg.AsyncConnection.connect(config.POSTGRES_DSN, autocommit=True) as pg:
+        await pg.execute(ESQUEMA)
+        async with pg.cursor() as cur:
+            await cur.execute(
+                "SELECT variable, date_bin(%s, inicio, TIMESTAMPTZ '1970-01-01') AS t, "
+                "sum(promedio * muestras) / sum(muestras), sum(muestras), sum(descartadas) "
+                "FROM mediciones WHERE sensor_id = %s AND inicio >= %s "
+                "GROUP BY variable, t ORDER BY variable, t",
+                (paso, sensor_id, desde),
+            )
+            filas = await cur.fetchall()
+
+    series: dict[str, list[dict]] = defaultdict(list)
+    muestras: dict[str, int] = defaultdict(int)
+    descartadas = 0
+    for variable, t, valor, n, d in filas:
+        series[variable].append({"t": t.isoformat(), "v": round(valor, 2)})
+        muestras[variable] += n
+        descartadas += d
+    return {
+        "desde": desde.isoformat(),
+        "intervalo_min": int(paso.total_seconds() // 60),
+        # Lecturas validas del sensor (la variable con mas, como en el historico crudo)
+        "puntos": max(muestras.values(), default=0),
+        "descartadas": descartadas,
+        "series": series,
+    }
+
+
 async def estado() -> dict:
     """Ultimas ejecuciones y resumen de lo que hay en Postgres."""
     async with await psycopg.AsyncConnection.connect(config.POSTGRES_DSN, autocommit=True) as pg:
