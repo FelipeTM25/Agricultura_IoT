@@ -8,12 +8,14 @@
 # Flujo de los datos:
 #
 #   Sensor --HTTP+clave--> Gestor --> Orion (estado actual) --suscripcion--> QuantumLeap
-#                      |                                        |
-#                    MongoDB                                 CrateDB (historico crudo)
-#                                                               |
-#                                                           limpieza (cada 15 min o con boton)
-#                                                               |
-#                                                           Postgres (datos limpios) --> Grafana
+#                                    |       |                                  |
+#                                 MongoDB    +--suscripcion--> alertas      CrateDB (historico crudo)
+#                                              (umbrales -> correo)             |
+#                                                     |                    limpieza (cada 15 min o con boton)
+#                                                     |                        |
+#                                                     +------------------> Postgres (datos limpios
+#                                                                          y alertas) --> Grafana,
+#                                                                          gestor y landing
 #
 # Puertos expuestos en la instancia:
 #   80    Gestor       front y API para administrar Orion (requiere login) y entrada de
@@ -29,9 +31,9 @@
 #   4200  CrateDB      consola web / API SQL   (4300 transporte interno)
 #   5432  CrateDB      protocolo PostgreSQL
 #   27017 MongoDB      base de datos de Orion
-# Postgres y limpieza no se publican: solo se usan dentro de la red de Docker.
+# Postgres, limpieza y alertas no se publican: solo se usan dentro de la red de Docker.
 #
-# Credenciales de Postgres: archivo .env en esta carpeta (ver .env.example).
+# Credenciales de Postgres y del correo de las alertas: archivo .env en esta carpeta (ver .env.example).
 #
 # Todos los servicios tienen restart: unless-stopped para que vuelvan a
 # arrancar solos cuando la instancia se apaga y se enciende.
@@ -184,6 +186,33 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (ver .env.example)}
       - LIMPIEZA_INTERVALO_MIN=${LIMPIEZA_INTERVALO_MIN:-15}
       - LIMPIEZA_INTERVALO_DATOS_MIN=${LIMPIEZA_INTERVALO_DATOS_MIN:-5}
+
+  # ---------------------------------------------------------------------------
+  # Alertas: manejador de mensajes. Crea una suscripcion en Orion que le notifica
+  # cada lectura, la compara con los umbrales (tabla umbrales de Postgres, se
+  # editan en el gestor), registra las alertas y avisa por correo si hay
+  # SMTP_USUARIO y SMTP_PASSWORD en .env. Sin puerto publico.
+  # ---------------------------------------------------------------------------
+  alertas:
+    build: ./alertas
+    container_name: alertas
+    restart: unless-stopped
+    depends_on:
+      - orion
+      - postgres
+    environment:
+      - ORION_URL=http://orion:1026
+      - ALERTAS_URL_NOTIFICACION=http://alertas:8000/notify
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-agricultura}
+      - POSTGRES_USER=${POSTGRES_USER:-agricultura}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (ver .env.example)}
+      - ALERTAS_CONFIRMAR_LECTURAS=${ALERTAS_CONFIRMAR_LECTURAS:-2}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USUARIO=${SMTP_USUARIO:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - ALERTAS_CORREO_DESTINO=${ALERTAS_CORREO_DESTINO:-}
 
   # ---------------------------------------------------------------------------
   # Gestor: API (FastAPI) + front (React) para administrar las entidades y
