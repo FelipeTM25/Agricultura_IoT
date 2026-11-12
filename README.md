@@ -1,8 +1,26 @@
 # Agricultura IoT
 
-Proyecto final de IoT. Plataforma basada en FIWARE para recibir, almacenar y
-visualizar las lecturas de los sensores de un cultivo. Se despliega con Docker
-Compose en una instancia EC2 de AWS con Ubuntu.
+Proyecto final de IoT (UPB). Plataforma basada en FIWARE para recibir, almacenar,
+limpiar y visualizar las lecturas de los sensores de un cultivo, con alertas por
+correo cuando una variable sale de su rango. Se despliega con Docker Compose en
+una instancia EC2 de AWS con Ubuntu.
+
+**Desarrollado por Felipe Torres Montoya y Camilo Marin Muriel.**
+
+## Contenido
+
+- [Arquitectura](#arquitectura)
+- [Contenido del repositorio](#contenido-del-repositorio)
+- [Despliegue en EC2](#despliegue-en-ec2)
+- [Probar el flujo de datos](#probar-el-flujo-de-datos)
+- [Gestor de Orion](#gestor-de-orion)
+- [Landing publica](#landing-publica)
+- [Nodo sensor (LilyGO T-Beam)](#nodo-sensor-lilygo-t-beam)
+- [Limpieza de datos y Grafana](#limpieza-de-datos-y-grafana)
+- [Alertas (toma de decisiones)](#alertas-toma-de-decisiones)
+- [Conectar Grafana a CrateDB](#conectar-grafana-a-cratedb)
+- [Comandos utiles](#comandos-utiles)
+- [Autores](#autores)
 
 ## Arquitectura
 
@@ -108,7 +126,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(24))"  # pegar el result
 nano .env
 ```
 
-En el mismo `.env` van, opcionales, `SMTP_USUARIO` y `SMTP_PASSWORD` para recibir las alertas
+En el mismo `.env` van `SMTP_USUARIO` y `SMTP_PASSWORD` para recibir las alertas
 por correo (ver *Alertas* mas abajo).
 
 ### 5. Ajustar `vm.max_map_count` (requerido por CrateDB)
@@ -290,7 +308,7 @@ otras 2 vuelven a la normalidad; asi se avisa una vez al empezar y otra al norma
 suelto no dispara nada. Las lecturas fisicamente imposibles (los mismos rangos de la limpieza) se
 ignoran. Cada alerta queda en la tabla `alertas` y se ve en el gestor y en la landing.
 
-**Correo (opcional):** cada alerta que se abre o se cierra manda un correo por SMTP (Gmail por
+**Correo:** cada alerta que se abre o se cierra manda un correo por SMTP (Gmail por
 defecto, gratis). En la cuenta de Gmail que envia: activar la verificacion en 2 pasos y crear una
 contrasena de aplicacion en `https://myaccount.google.com/apppasswords`. En el `.env` de la raiz poner
 `SMTP_USUARIO` (el correo), `SMTP_PASSWORD` (la contrasena de aplicacion, no la normal) y, si llegan a
@@ -303,7 +321,7 @@ sudo docker compose up -d alertas
 
 En el gestor, *Alertas* -> *Enviar correo de prueba* lo comprueba (si no llega, revisar spam).
 
-## Conectar Grafana a CrateDB (opcional)
+## Conectar Grafana a CrateDB
 
 En Grafana: *Connections > Data sources > Add > PostgreSQL*
 
@@ -322,11 +340,7 @@ sudo docker compose down                # detener (conserva los datos)
 sudo docker compose down -v             # detener y BORRAR los datos
 ```
 
-## Problemas conocidos
+## Autores
 
-- **Orion se cae al arrancar** con `reports wire version 6, but this version of libmongoc requires at least 8`:
-  la imagen de MongoDB es demasiado vieja. Orion-LD necesita MongoDB 4.2 o superior (el compose usa `mongo:4.4`).
-  Si el volumen fue creado con una version anterior, hay que borrarlo (`sudo docker volume rm <carpeta>_mongo-db`).
-- **CrateDB no arranca** con `max virtual memory areas vm.max_map_count [65530] is too low`: repetir el paso 5.
-- **`permission denied ... docker.sock`**: usar `sudo`, o agregar el usuario al grupo con
-  `sudo usermod -aG docker ubuntu` y volver a conectarse.
+Proyecto desarrollado por **Felipe Torres Montoya** y **Camilo Marin Muriel**
+para la materia IoT, Universidad Pontificia Bolivariana (UPB), 2026.
